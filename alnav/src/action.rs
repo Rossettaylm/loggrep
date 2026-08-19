@@ -26,6 +26,7 @@ pub struct PaletteItem {
 pub const PALETTE_IDS: &[ActionId] = &[
     ActionId::GlobalFilterNew,
     ActionId::GlobalHighlightNew,
+    ActionId::GlobalHighlightAdd,
     ActionId::GlobalExcludeNew,
     ActionId::GlobalOpenHelp,
     ActionId::GlobalQuit,
@@ -131,7 +132,8 @@ pub fn dispatch(app: &mut App, id: ActionId) {
         GlobalFocusLog => app.focus = Focus::LogList,
         GlobalFocusInput | LeaderManage => app.open_unified_picker(),
         GlobalFilterNew => app.open_picker_new(PickerKind::Filter),
-        GlobalHighlightNew => app.open_picker_new(PickerKind::Highlight),
+        GlobalHighlightNew => app.open_highlight_finder(),
+        GlobalHighlightAdd => app.open_picker_new(PickerKind::Highlight),
         GlobalExcludeNew => app.open_picker_new(PickerKind::Exclude),
         GlobalOpenHelp | StripOpenHelp => {
             if matches!(
@@ -437,6 +439,11 @@ mod tests {
             ),
             (
                 ActionId::GlobalHighlightNew,
+                "Find Highlight",
+                theme::GLYPH_TITLE_HIGHLIGHT,
+            ),
+            (
+                ActionId::GlobalHighlightAdd,
                 "Add Highlight",
                 theme::GLYPH_TITLE_HIGHLIGHT,
             ),
@@ -648,6 +655,29 @@ mod tests {
         let session = app.picker.as_ref().expect("picker");
         assert!(matches!(session.kind, PickerKind::Filter));
         assert!(matches!(session.mode, crate::picker::PickerMode::New));
+    }
+
+    #[test]
+    fn dispatch_highlight_add_force_new_with_existing_groups() {
+        use crate::highlight_model::HighlightGroup;
+        let mut app = idle_app();
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("error").unwrap());
+        dispatch(&mut app, ActionId::GlobalHighlightAdd);
+        let session = app.picker.as_ref().expect("picker");
+        assert!(matches!(session.kind, PickerKind::Highlight));
+        assert!(matches!(session.mode, crate::picker::PickerMode::New));
+        assert!(!session.auto_from_manage);
+    }
+
+    #[test]
+    fn dispatch_highlight_new_opens_manage_when_groups_exist() {
+        use crate::highlight_model::HighlightGroup;
+        let mut app = idle_app();
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("error").unwrap());
+        dispatch(&mut app, ActionId::GlobalHighlightNew);
+        let session = app.picker.as_ref().expect("picker");
+        assert!(matches!(session.kind, PickerKind::Highlight));
+        assert!(matches!(session.mode, crate::picker::PickerMode::Manage));
     }
 
     #[test]

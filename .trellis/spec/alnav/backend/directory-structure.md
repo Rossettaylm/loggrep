@@ -95,14 +95,20 @@ Manage mode is dispatched **by `session.kind`** in two places:
 
 - `picker_render_data` (`main.rs`): builds the candidate list per kind.
   `Unified` aggregates Filter+Highlight+Exclude; `Bookmark` builds a
-  bookmark-only list (no `[Bookmark]:` prefix). Future per-kind Manage
-  panels branch here.
+  bookmark-only list (no `[Bookmark]:` prefix). `Highlight` Manage is
+  also per-kind: pattern-only labels, `ActionKind::Jump`, never
+  `unified_picker_items`. Future per-kind Manage panels branch here.
 - `handle_picker_key` Manage branch (`main.rs`): routes keys per kind.
-  `Unified` supports Tab multi-select + Ctrl-X edit; `Bookmark` disables
-  edit (Tab = no-op, Ctrl-X = flash) and binds Enter = jump, Delete /
-  Ctrl-Backspace = delete-via-`ConfirmKind::DeleteBookmark`.
+  `Unified` supports Tab multi-select + Ctrl-X edit; Enter = toggle
+  (Highlight rows included — no jump, picker stays open).
+  `Highlight` (finder): no Tab multi-select; Enter =
+  `activate_highlight_group` + close; Ctrl-X = edit; Delete /
+  Ctrl-Backspace = delete confirm; nonempty query + zero hits →
+  `enter_new_with_draft` (`auto_from_manage`); last group deleted → New.
+  `Bookmark` disables edit (Tab = no-op, Ctrl-X = flash) and binds
+  Enter = jump, Delete / Ctrl-Backspace = delete-via-`ConfirmKind::DeleteBookmark`.
   `Preset` is Manage-only (no auto-New): Enter = apply, Ctrl-X = rename
-  name dialog, Delete = `ConfirmKind::DeletePreset`; save is `Space w`
+  name dialog, Delete = `ConfirmKind::DeletePreset`; save is `C-s`
   outside the picker.
 
 **Convention**: to add a new per-kind Manage panel, add a `PickerKind`
@@ -141,3 +147,8 @@ for O(1) LogList bg lookup. It is mutated in lockstep with every
   newest-first display, maps back to real `app.bookmarks.items` index.
 - `unified_picker_items` (`main.rs`): aggregate for the Unified panel only
   (Filter+Highlight+Exclude; Bookmark removed in 07-23-bookmark-ux).
+- `highlight_visible_indices` (`main.rs`) + `App::open_highlight_finder` /
+  `activate_highlight_group`: LogList `/` find-or-create. Enable before
+  jump (`jump_first_match_of` no-ops when disabled). Does not set
+  `view_focus`. Palette **Add Highlight** is `GlobalHighlightAdd` →
+  `open_picker_new`.

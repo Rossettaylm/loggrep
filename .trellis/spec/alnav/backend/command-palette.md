@@ -88,6 +88,7 @@ Update this spec when changing:
 - Help catalog includes `GlobalCommandPalette` (`C-p` / `palette`).
 - Idle status bar stays two hints (`? help`, `; filter`). Do **not** add idle `C-p`.
 - Palette open → `help_available` false; status L2 is the palette context.
+- Highlight catalog: **Find Highlight** (`GlobalHighlightNew`, `/`) is find-or-create; **Add Highlight** (`GlobalHighlightAdd`, unbound) is always `open_picker_new`. Do not merge them back into one dispatch.
 
 ### 4. Validation & Error Matrix
 
@@ -109,7 +110,7 @@ Update this spec when changing:
 
 ### 6. Tests Required
 
-- `action::` — `PALETTE_IDS` matches `in_palette`; live hides Time; no row hides Lock PID / Add Bookmark; empty strip hides delete; `dispatch(GlobalFilterNew)` opens Filter New; `dispatch(TimeSet)` no-op on live.
+- `action::` — `PALETTE_IDS` matches `in_palette`; live hides Time; no row hides Lock PID / Add Bookmark; empty strip hides delete; `dispatch(GlobalFilterNew)` opens Filter New; `dispatch(GlobalHighlightNew)` is find-or-create; `dispatch(GlobalHighlightAdd)` force-New; `dispatch(TimeSet)` no-op on live.
 - `command_palette::` — `k` types into query; `move_sel` clamps.
 - `help::` — catalog/LogList include palette; idle status still `help`+`filter`; `help_available` false when palette open.
 - `ui::` — empty open has no `Add Filter`; query `filter` shows it; no `Color::*` / inline glyphs in non-test `ui.rs`.

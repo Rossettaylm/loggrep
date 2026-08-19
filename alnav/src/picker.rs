@@ -103,6 +103,9 @@ pub struct PickerSession {
     pub choices: Vec<String>,
     /// Tab multi-select set (Unified Manage only); keyed by stable source id.
     pub checked: HashSet<UnifiedId>,
+    /// Highlight finder: Manage query had zero hits → New. Clearing that draft
+    /// returns to Manage. Manual / palette New stays in New.
+    pub auto_from_manage: bool,
 }
 
 impl PickerSession {
@@ -117,6 +120,7 @@ impl PickerSession {
             input: None,
             choices: Vec::new(),
             checked: HashSet::new(),
+            auto_from_manage: false,
         }
     }
 
@@ -135,6 +139,31 @@ impl PickerSession {
         self.confirm = None;
         self.checked.clear();
         self.input = Self::fresh_input_for_kind(self.kind.clone());
+        self.auto_from_manage = false;
+    }
+
+    /// Auto-New from Highlight Manage: keep the query as the New draft.
+    pub fn enter_new_with_draft(&mut self, draft: impl Into<String>) {
+        self.mode = PickerMode::New;
+        self.query.clear();
+        self.draft = TextField::from_text(draft.into());
+        self.selected = 0;
+        self.confirm = None;
+        self.checked.clear();
+        self.input = Self::fresh_input_for_kind(self.kind.clone());
+        self.auto_from_manage = true;
+    }
+
+    /// Leave auto-New and restore Highlight Manage (query cleared).
+    pub fn return_to_manage(&mut self) {
+        self.mode = PickerMode::Manage;
+        self.query.clear();
+        self.draft.clear();
+        self.selected = 0;
+        self.confirm = None;
+        self.checked.clear();
+        self.input = None;
+        self.auto_from_manage = false;
     }
 
     pub fn enter_edit(&mut self, index: usize, prefill: String) {
@@ -144,6 +173,7 @@ impl PickerSession {
         self.confirm = None;
         self.checked.clear();
         self.input = None;
+        self.auto_from_manage = false;
     }
 
     pub fn enter_edit_input(&mut self, index: usize, input: InputBox) {
@@ -221,6 +251,23 @@ mod tests {
         assert_eq!(p.prompt_prefix(), ':');
         assert!(p.query.is_empty());
         assert!(p.draft.is_empty());
+        assert!(!p.auto_from_manage);
+    }
+
+    #[test]
+    fn enter_new_with_draft_keeps_text_and_flags_auto() {
+        let mut p = PickerSession::open(PickerKind::Highlight);
+        p.query = "er".into();
+        p.enter_new_with_draft(p.query.to_string());
+        assert_eq!(p.mode, PickerMode::New);
+        assert_eq!(p.draft.as_str(), "er");
+        assert!(p.query.is_empty());
+        assert!(p.auto_from_manage);
+        p.return_to_manage();
+        assert_eq!(p.mode, PickerMode::Manage);
+        assert!(p.draft.is_empty());
+        assert!(p.query.is_empty());
+        assert!(!p.auto_from_manage);
     }
 
     #[test]

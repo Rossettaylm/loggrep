@@ -195,6 +195,13 @@ impl Binding {
         })
     }
 
+    /// No default key. `--init` serializes as `""` (unbind).
+    pub fn unbound() -> Self {
+        Self {
+            strokes: Vec::new(),
+        }
+    }
+
     pub fn format(&self) -> String {
         self.strokes
             .iter()
@@ -432,6 +439,7 @@ pub enum ActionId {
     GlobalFocusInput,
     GlobalFilterNew,
     GlobalHighlightNew,
+    GlobalHighlightAdd,
     GlobalExcludeNew,
     GlobalOpenHelp,
     GlobalCommandPalette,
@@ -616,6 +624,7 @@ impl ActionId {
         Self::GlobalFocusInput,
         Self::GlobalFilterNew,
         Self::GlobalHighlightNew,
+        Self::GlobalHighlightAdd,
         Self::GlobalExcludeNew,
         Self::GlobalOpenHelp,
         Self::GlobalCommandPalette,
@@ -880,6 +889,20 @@ impl ActionId {
                 kind: ActionKind::Leaf,
                 capabilities: &[],
                 label: "highlight",
+                detail: "find or create a highlight and jump to the first hit",
+                in_palette: false,
+                palette_title: "",
+                palette_icon: "",
+            }
+            .with_palette("Find Highlight", theme::GLYPH_TITLE_HIGHLIGHT),
+            Self::GlobalHighlightAdd => ActionMeta {
+                id: Self::GlobalHighlightAdd,
+                context: KeyContext::Global,
+                toml_key: "highlight_add",
+                default: Binding::unbound(),
+                kind: ActionKind::Leaf,
+                capabilities: &[],
+                label: "add highlight",
                 detail: "open highlight picker in new mode",
                 in_palette: false,
                 palette_title: "",
@@ -2665,6 +2688,7 @@ fn action_by_toml(ctx: KeyContext, key: &str) -> Option<ActionId> {
         (KeyContext::Global, "focus_input") => Some(ActionId::GlobalFocusInput),
         (KeyContext::Global, "filter_new") => Some(ActionId::GlobalFilterNew),
         (KeyContext::Global, "highlight_new") => Some(ActionId::GlobalHighlightNew),
+        (KeyContext::Global, "highlight_add") => Some(ActionId::GlobalHighlightAdd),
         (KeyContext::Global, "exclude_new") => Some(ActionId::GlobalExcludeNew),
         (KeyContext::Global, "open_help") => Some(ActionId::GlobalOpenHelp),
         (KeyContext::Global, "command_palette") => Some(ActionId::GlobalCommandPalette),
@@ -2819,7 +2843,15 @@ impl KeymapStore {
     pub fn builtin() -> Self {
         let mut bindings = HashMap::with_capacity(ActionId::ALL.len());
         for &id in ActionId::ALL {
-            bindings.insert(id, Some(id.meta().default.clone()));
+            let default = id.meta().default;
+            bindings.insert(
+                id,
+                if default.strokes.is_empty() {
+                    None
+                } else {
+                    Some(default)
+                },
+            );
         }
         Self {
             bindings,
@@ -3277,6 +3309,8 @@ move_down = "k"
         assert!(!text.contains("open = \"o\""));
         assert!(text.contains("[command_palette]"));
         assert!(text.contains("command_palette = \"C-p\""));
+        assert!(text.contains("highlight_new = \"/\""));
+        assert!(text.contains("highlight_add = \"\""));
         assert!(text.contains("submit = \"Enter\""));
         assert!(text.contains("[help]"));
         assert!(text.contains("back = \"h\""));

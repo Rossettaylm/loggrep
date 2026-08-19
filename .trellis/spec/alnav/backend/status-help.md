@@ -86,13 +86,13 @@ Left (never yields) → middle flash pill → pad + right-aligned hints.
 - Close any layer: Esc / `?` / Ctrl+C → `close_help()`; does **not** resume following. `h` / Backspace return to Home (restore TOC highlight); on Home they are no-ops. Digits `1`–`7` jump from Home or any page except while the search prompt is active.
 - Home `j`/`k`/`J`/`K` move the TOC (`J`/`K` = `FAST_SCROLL_STEP`). Sub-page `j`/`k`/`J`/`K`/`g`/`G` scroll that page's body; max scroll is `line_count - viewport` so the last line sits at the bottom, not the top.
 - Placement: Help uses `centered_modal_rect` (vertically centered). Input/Search/Time/Detail stay `top_modal_rect`.
-- `/` search (Help context only): ignore-case substring over Home + all pages; vim prompt (`TextField`); highlight via `theme::help_search_*`. Prompt: printable chars edit the query (including `j`/`k`/`h`/`1`–`7`/`n`); Up/Down walk hits; Enter nonempty commits (keep highlights, then `n`/`N`); Enter empty or Esc in prompt / after committed hits clears search and stays in Help. No match: flash `NO MATCH`, do not jump. LogList `/` remains Highlight New when Help is closed.
+- `/` search (Help context only): ignore-case substring over Home + all pages; vim prompt (`TextField`); highlight via `theme::help_search_*`. Prompt: printable chars edit the query (including `j`/`k`/`h`/`1`–`7`/`n`); Up/Down walk hits; Enter nonempty commits (keep highlights, then `n`/`N`); Enter empty or Esc in prompt / after committed hits clears search and stays in Help. No match: flash `NO MATCH`, do not jump. LogList `/` is Highlight **find-or-create** (`open_highlight_finder`) when Help is closed.
 - Short Home frames pin Active + chrome and keep at least one TOC row when height allows.
 
 ### Keybinding note
 
-- `?` opens Help. `/` remains Highlight New (`open_picker_new`) when Help is closed. Help `/` is search (`KeyContext::Help`) and must not steal LogList `/`. `C-p` opens the command palette (not Help).
-- Do **not** rebind `?` to Highlight New.
+- `?` opens Help. `/` is Highlight find-or-create (`open_highlight_finder`) when Help is closed (empty groups → New; else Highlight-only Manage). Help `/` is search (`KeyContext::Help`) and must not steal LogList `/`. Palette **Add Highlight** (`GlobalHighlightAdd`) is force New. `C-p` opens the command palette (not Help).
+- Do **not** rebind `?` to Highlight find-or-create.
 - LogList L1: `f` label is `focus` (lock + view focus); L2_LOCK includes `p`/`t`/`h`/`e`/`u`.
 - L2_TIME: `t` set / `u` clear (open key is `tt`, not `ts`). Catalog session: `f h/e`, `t t/u`.
 - Source switch: `C-f` Open File, `C-g` Open Stream (not `of`/`os`, not `C-S-o`/`C-S-l`). Dashboard bare `o` still opens the file panel.
@@ -112,7 +112,7 @@ English. Prefer short uppercase tokens (`EXISTS`, `NO ROW`, `UNKNOWN FIELD`).
 | `?` while `pending_yank` (etc.) | Help does not open (pending handler consumes key) |
 | `?` while Picker/Time/Detail open | Help does not open |
 | Help Esc | Close whole panel; `following` unchanged (`h`/Backspace go Home; search Esc clears search first) |
-| Help `/` while prompt open | Types into the query (does not open Highlight New) |
+| Help `/` while prompt open | Types into the query (does not open Highlight finder) |
 | Narrow terminal | Right hints hide when budget `< MIN_HELP_WIDTH` (8); left icons win |
 
 ---

@@ -388,7 +388,7 @@ fn l1_loglist(app: &App, live: bool) -> Vec<HintEntry> {
         app,
         ActionId::GlobalHighlightNew,
         "highlight",
-        "open highlight new",
+        "find or create a highlight",
     );
     push_single(
         &mut out,
@@ -829,7 +829,8 @@ pub fn page_blurb(page: HelpPage) -> &'static [&'static str] {
         HelpPage::Highlight => &[
             "Highlight groups paint matching text; they do not hide rows.",
             "Enabled patterns are OR and walk the 8-slot color ramp in order.",
-            "`/` on LogList opens Highlight New; `/` inside this Help panel is search (Help context) and does not create a highlight.",
+            "`/` on LogList finds or creates a highlight and jumps to the first hit; `/` inside this Help panel is search and does not create a highlight.",
+            "Command palette Add Highlight always opens New. Unified Enter still toggles enable without jumping.",
         ],
         HelpPage::Log => &[
             "The log list is the action origin: most cancels return here.",
@@ -845,8 +846,8 @@ pub fn page_blurb(page: HelpPage) -> &'static [&'static str] {
         ],
         HelpPage::Picker => &[
             "Space is Leader; Space Space opens unified Manage.",
-            "Bare `;` `/` ` force New for Filter / Highlight / Exclude.",
-            "Typing in Manage with no matches switches to New; Esc always closes the panel and does not return to Manage.",
+            "Bare `;` and backtick force New for Filter / Exclude. `/` finds or creates a Highlight.",
+            "Unified Manage stays in Manage when nothing matches. Highlight finder auto-opens New.",
             "Bookmark Manage is `mm`, not this unified picker.",
         ],
         HelpPage::Overlays => &[
@@ -935,8 +936,8 @@ fn page_entries(app: &App, page: HelpPage) -> Vec<HintEntry> {
                 &mut out,
                 app,
                 ActionId::GlobalHighlightNew,
-                "highlight new",
-                "open highlight picker in new mode",
+                "find highlight",
+                "find or create a highlight and jump to the first hit",
             );
             push_agg(
                 &mut out,
@@ -1152,8 +1153,8 @@ fn page_entries(app: &App, page: HelpPage) -> Vec<HintEntry> {
                 &mut leader,
                 app,
                 ActionId::GlobalHighlightNew,
-                "highlight new",
-                "open highlight picker in new mode",
+                "find highlight",
+                "find or create a highlight and jump to the first hit",
             );
             push_single(
                 &mut leader,
@@ -1933,6 +1934,25 @@ mod tests {
         let app = app_with_focus(Focus::LogList);
         let filter = page_entries(&app, HelpPage::Filter);
         assert!(filter.iter().any(|e| e.label == "filter new"), "{filter:?}");
+        let highlight = page_entries(&app, HelpPage::Highlight);
+        assert!(
+            highlight.iter().any(|e| e.label == "find highlight"),
+            "{highlight:?}"
+        );
+        let picker = joined_lines(
+            &page_doc_lines(&app, HelpPage::Picker)
+                .into_iter()
+                .map(|l| l.line)
+                .collect::<Vec<_>>(),
+        );
+        assert!(
+            !picker.contains("force New for Filter / Highlight"),
+            "Picker blurb must not call / force New: {picker}"
+        );
+        assert!(
+            picker.contains("finds or creates") || picker.contains("find-or-create"),
+            "{picker}"
+        );
         let overlays = joined_lines(
             &page_doc_lines(&app, HelpPage::Overlays)
                 .into_iter()

@@ -725,9 +725,35 @@ impl App {
         }
     }
 
-    /// Open the picker forced into New mode (`:` `/` `` ` `` `mm`).
+    /// Open the picker forced into New mode (`;` `` ` ``, palette Add Highlight).
     pub fn open_picker_new(&mut self, kind: crate::picker::PickerKind) {
         self.open_picker_with(kind, true);
+    }
+
+    /// LogList `/`: empty groups → Highlight New; otherwise Highlight Manage.
+    pub fn open_highlight_finder(&mut self) {
+        if self.highlight_groups.groups.is_empty() {
+            self.open_picker_new(crate::picker::PickerKind::Highlight);
+        } else {
+            self.open_picker(crate::picker::PickerKind::Highlight);
+        }
+    }
+
+    /// Enable the group if needed, make it the n/N target, jump to the first hit.
+    /// Other enabled highlights stay painted. Does not set view-focus.
+    pub fn activate_highlight_group(&mut self, index: usize) -> bool {
+        let Some(group) = self.highlight_groups.groups.get_mut(index) else {
+            return false;
+        };
+        if !group.enabled {
+            group.enabled = true;
+        }
+        self.active_highlight = Some(index);
+        self.match_stats_stale = true;
+        if self.store.is_file() {
+            self.restart_highlight_scan();
+        }
+        self.jump_first_match_of(index)
     }
 
     fn open_picker_with(&mut self, kind: crate::picker::PickerKind, prefer_new: bool) {
@@ -898,7 +924,7 @@ impl App {
             match &session.kind {
                 PickerKind::Highlight => {
                     if session.draft.is_empty() {
-                        // History candidates stay sync/small — cancel vocab job.
+                        // Empty New lists no history; cancel any in-flight vocab job.
                         Action::Clear
                     } else {
                         Action::Request {
@@ -4526,6 +4552,43 @@ mod highlight_tests {
         assert_eq!(idx1, 0);
         assert_eq!(app.active_highlight, Some(0));
         assert_eq!(app.highlight_groups.groups.len(), 2);
+    }
+
+    #[test]
+    fn test_open_highlight_finder_empty_is_new_else_manage() {
+        use crate::picker::{PickerKind, PickerMode};
+        let mut app = App::new(100);
+        app.open_highlight_finder();
+        assert_eq!(app.picker.as_ref().unwrap().kind, PickerKind::Highlight);
+        assert_eq!(app.picker.as_ref().unwrap().mode, PickerMode::New);
+        app.close_picker();
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("error").unwrap());
+        app.open_highlight_finder();
+        assert_eq!(app.picker.as_ref().unwrap().mode, PickerMode::Manage);
+        assert!(!app.picker.as_ref().unwrap().auto_from_manage);
+    }
+
+    #[test]
+    fn test_activate_highlight_group_enables_then_jumps() {
+        let mut app = App::new(100);
+        let (tx, rx) = mpsc::channel();
+        tx.send(row_with_msg("T", "aaa")).unwrap();
+        tx.send(row_with_msg("T", "error here")).unwrap();
+        tx.send(row_with_msg("T", "warn too")).unwrap();
+        drop(tx);
+        app.drain(&rx);
+        app.following = false;
+        app.cursor = 0;
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("error").unwrap());
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("warn").unwrap());
+        app.highlight_groups.groups[0].enabled = false;
+        assert!(app.activate_highlight_group(0));
+        assert!(app.highlight_groups.groups[0].enabled);
+        assert!(app.highlight_groups.groups[1].enabled);
+        assert_eq!(app.active_highlight, Some(0));
+        assert_eq!(app.cursor, 1);
+        assert!(!app.following);
+        assert!(!app.view_focus.highlight);
     }
 
     #[test]

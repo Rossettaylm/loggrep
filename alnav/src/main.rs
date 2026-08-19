@@ -1247,6 +1247,36 @@ fn picker_render_data(
                     }
                 }
             }
+            PickerKind::Highlight => {
+                let vis = highlight_visible_indices(app);
+                labels = vis
+                    .iter()
+                    .map(|&i| app.highlight_groups.groups[i].pattern.clone())
+                    .collect();
+                styles = vis
+                    .iter()
+                    .map(|&i| {
+                        if app.highlight_groups.groups[i].enabled {
+                            theme::unified_kind_style(crate::picker::UnifiedKind::Highlight)
+                        } else {
+                            theme::disabled_chip_style()
+                        }
+                    })
+                    .collect();
+                checked = vec![false; vis.len()];
+                actions = vec![crate::ui::ActionKind::Jump; vis.len()];
+                empty_msg = "no highlights".to_string();
+                if show_preview {
+                    if let Some(&idx) = vis.get(session.selected) {
+                        preview_lines = preview::preview_highlight_pattern_lines(
+                            app,
+                            &app.highlight_groups.groups[idx].pattern,
+                            preview_limit,
+                        )
+                        .unwrap_or_default();
+                    }
+                }
+            }
             _ => {
                 // Unified panel: Filter/Highlight/Exclude only (bookmark arm removed).
                 let all = unified_picker_items(app);
@@ -1316,18 +1346,6 @@ fn picker_render_data(
             PickerKind::Highlight => {
                 if !session.draft.is_empty() {
                     labels = app.vocab_match.display_labels().to_vec();
-                    styles = vec![theme::muted(); labels.len()];
-                } else {
-                    let highlight_box = crate::highlight_model::HighlightBox {
-                        draft: session.draft.clone(),
-                        editing: true,
-                        selected: session.selected,
-                    };
-                    let indices = highlight_box.candidate_indices(&app.highlight_groups.groups);
-                    labels = indices
-                        .iter()
-                        .map(|&index| app.highlight_groups.groups[index].pattern.clone())
-                        .collect();
                     styles = vec![theme::muted(); labels.len()];
                 }
                 preview_lines = preview::preview_highlight_pattern_lines(
@@ -1484,7 +1502,9 @@ fn unified_visible_ids(app: &App) -> Vec<crate::picker::UnifiedId> {
     // Bookmark / Preset panels key off their own helpers; never enter unified path.
     if matches!(
         session.kind,
-        crate::picker::PickerKind::Bookmark | crate::picker::PickerKind::Preset
+        crate::picker::PickerKind::Bookmark
+            | crate::picker::PickerKind::Preset
+            | crate::picker::PickerKind::Highlight
     ) {
         return Vec::new();
     }
@@ -1498,12 +1518,70 @@ fn unified_selected_id(app: &App) -> Option<crate::picker::UnifiedId> {
     let session = app.picker.as_ref()?;
     if matches!(
         session.kind,
-        crate::picker::PickerKind::Bookmark | crate::picker::PickerKind::Preset
+        crate::picker::PickerKind::Bookmark
+            | crate::picker::PickerKind::Preset
+            | crate::picker::PickerKind::Highlight
     ) {
         return None;
     }
     let ids = unified_visible_ids(app);
     ids.get(session.selected).copied()
+}
+
+/// Visible indices into `app.highlight_groups.groups` (storage order).
+fn highlight_visible_indices(app: &App) -> Vec<usize> {
+    use crate::picker::PickerSession;
+    let session = match app.picker.as_ref() {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
+    let labels: Vec<String> = app
+        .highlight_groups
+        .groups
+        .iter()
+        .map(|g| g.pattern.clone())
+        .collect();
+    PickerSession::filtered_indices(&labels, session.query.as_str())
+}
+
+fn highlight_selected_index(app: &App) -> Option<usize> {
+    let vis = highlight_visible_indices(app);
+    let session = app.picker.as_ref()?;
+    vis.get(session.selected).copied()
+}
+
+fn maybe_highlight_auto_new(app: &mut App) {
+    use crate::picker::{PickerKind, PickerMode};
+    let Some(session) = app.picker.as_ref() else {
+        return;
+    };
+    if session.kind != PickerKind::Highlight || !matches!(session.mode, PickerMode::Manage) {
+        return;
+    }
+    if session.query.is_empty() {
+        return;
+    }
+    if !highlight_visible_indices(app).is_empty() {
+        return;
+    }
+    let draft = app.picker.as_ref().unwrap().query.to_string();
+    app.picker.as_mut().unwrap().enter_new_with_draft(draft);
+}
+
+fn maybe_return_highlight_auto_new(app: &mut App) {
+    use crate::picker::{PickerKind, PickerMode};
+    let Some(session) = app.picker.as_ref() else {
+        return;
+    };
+    if session.kind != PickerKind::Highlight
+        || !matches!(session.mode, PickerMode::New)
+        || !session.auto_from_manage
+        || !session.draft.is_empty()
+        || app.highlight_groups.groups.is_empty()
+    {
+        return;
+    }
+    app.picker.as_mut().unwrap().return_to_manage();
 }
 
 /// Visible indices into `app.bookmarks.items` (newest-first display order)
@@ -1559,6 +1637,28 @@ fn confirm_picker_delete(app: &mut App) {
             for id in &items {
                 app.delete_unified_at(id.kind, id.source_index);
             }
+            let highlight_manage = app
+                .picker
+                .as_ref()
+                .is_some_and(|s| matches!(s.kind, crate::picker::PickerKind::Highlight));
+            if highlight_manage {
+                // Empty groups must not stay in Manage (`/` with none → New).
+                if app.highlight_groups.groups.is_empty() {
+                    if let Some(session) = app.picker.as_mut() {
+                        session.cancel_confirm();
+                        session.enter_new();
+                    }
+                    return;
+                }
+                let count = highlight_visible_indices(app).len();
+                if let Some(session) = app.picker.as_mut() {
+                    session.cancel_confirm();
+                    session.checked.clear();
+                    session.selected = session.selected.min(count.saturating_sub(1));
+                }
+                maybe_highlight_auto_new(app);
+                return;
+            }
             let count = unified_picker_items(app).len();
             if let Some(session) = app.picker.as_mut() {
                 session.cancel_confirm();
@@ -1597,37 +1697,34 @@ fn replace_last_token(draft: &str, replacement: &str) -> String {
 fn submit_highlight_picker(app: &mut App) {
     use crate::picker::PickerMode;
 
-    let Some((mode, draft, candidate_selected)) = app.picker.as_ref().map(|session| {
-        (
-            session.mode.clone(),
-            session.draft.clone(),
-            session.selected,
-        )
-    }) else {
+    let Some((mode, draft)) = app
+        .picker
+        .as_ref()
+        .map(|session| (session.mode.clone(), session.draft.clone()))
+    else {
         return;
     };
     let mut highlight_box = crate::highlight_model::HighlightBox {
         draft,
         editing: true,
-        selected: candidate_selected,
+        selected: 0,
     };
-    let Ok(Some(group)) = highlight_box.confirm_or_submit(&app.highlight_groups.groups) else {
+    let Ok(Some(group)) = highlight_box.submit_draft() else {
         return;
     };
-    let selected = match mode {
+    let idx = match mode {
         PickerMode::New => app.push_or_find_highlight_group(group),
         PickerMode::Edit { index } => {
             if !app.update_search_group(index, &group.pattern) {
                 app.set_flash("EXISTS");
                 return;
             }
-            app.active_highlight = Some(index);
             index
         }
         PickerMode::Manage => return,
     };
-    app.active_highlight = Some(selected);
-    app.jump_first_match_of(selected);
+    // Exact reuse of a disabled group must enable before jump_first_match_of.
+    let _ = app.activate_highlight_group(idx);
     app.close_picker();
 }
 
@@ -1984,6 +2081,52 @@ fn handle_picker_key(app: &mut App, key: event::KeyEvent) {
                 }
                 return;
             }
+            PickerKind::Highlight => {
+                let vis = highlight_visible_indices(app);
+                let is_delete = matches!(key.code, KeyCode::Delete)
+                    || (matches!(key.code, KeyCode::Char('d')) && ctrl);
+                match key.code {
+                    KeyCode::Up => {
+                        app.picker.as_mut().unwrap().selected =
+                            app.picker.as_ref().unwrap().selected.saturating_sub(1);
+                    }
+                    KeyCode::Down => {
+                        let session = app.picker.as_mut().unwrap();
+                        session.selected = (session.selected + 1).min(vis.len().saturating_sub(1));
+                    }
+                    KeyCode::Tab => {}
+                    KeyCode::Char('x') if ctrl => {
+                        if let Some(idx) = highlight_selected_index(app) {
+                            let pattern = app.highlight_groups.groups[idx].pattern.clone();
+                            app.picker.as_mut().unwrap().enter_edit(idx, pattern);
+                        }
+                    }
+                    _ if is_delete => {
+                        if let Some(idx) = highlight_selected_index(app) {
+                            app.picker.as_mut().unwrap().request_delete_many(vec![
+                                crate::picker::UnifiedId {
+                                    kind: crate::picker::UnifiedKind::Highlight,
+                                    source_index: idx,
+                                },
+                            ]);
+                        }
+                    }
+                    KeyCode::Enter => {
+                        if let Some(idx) = highlight_selected_index(app) {
+                            let _ = app.activate_highlight_group(idx);
+                            app.close_picker();
+                        }
+                    }
+                    code => {
+                        let session = app.picker.as_mut().unwrap();
+                        if apply_text_field_key(&mut session.query, code, ctrl) {
+                            session.selected = 0;
+                            maybe_highlight_auto_new(app);
+                        }
+                    }
+                }
+                return;
+            }
             _ => {
                 // Unified panel (Filter/Highlight/Exclude).
                 let ids = unified_visible_ids(app);
@@ -2055,14 +2198,6 @@ fn handle_picker_key(app: &mut App, key: event::KeyEvent) {
                 if !draft.is_empty() {
                     let n = app.vocab_match.display_labels().len();
                     app.picker.as_mut().unwrap().selected = (sel + 1).min(n.saturating_sub(1));
-                } else {
-                    let mut highlight_box = crate::highlight_model::HighlightBox {
-                        draft: crate::text_field::TextField::from_text(draft),
-                        editing: true,
-                        selected: sel,
-                    };
-                    highlight_box.move_selection(&app.highlight_groups.groups, 1);
-                    app.picker.as_mut().unwrap().selected = highlight_box.selected;
                 }
             }
             KeyCode::Tab => {
@@ -2084,12 +2219,14 @@ fn handle_picker_key(app: &mut App, key: event::KeyEvent) {
                 let session = app.picker.as_mut().unwrap();
                 session.draft.kill_word_back();
                 session.selected = 0;
+                maybe_return_highlight_auto_new(app);
             }
             KeyCode::Delete => {}
             code => {
                 let session = app.picker.as_mut().unwrap();
                 if apply_text_field_key(&mut session.draft, code, ctrl) {
                     session.selected = 0;
+                    maybe_return_highlight_auto_new(app);
                 }
             }
         },
@@ -3779,6 +3916,10 @@ mod dispatch_tests {
             KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE),
         );
         assert!(app.help_search_prompting());
+        assert!(
+            app.picker.is_none(),
+            "Help / must not open Highlight picker"
+        );
         handle_help_key(
             &mut app,
             KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
@@ -4163,7 +4304,7 @@ mod dispatch_tests {
         handle_normal_key(&mut app, &mut input, KeyCode::Char('/'));
         let hl = app.picker.as_ref().unwrap();
         assert_eq!(hl.kind, PickerKind::Highlight);
-        assert_eq!(hl.mode, PickerMode::New);
+        assert_eq!(hl.mode, PickerMode::Manage);
         app.close_picker();
 
         handle_normal_key(&mut app, &mut input, KeyCode::Char('`'));
@@ -4293,6 +4434,253 @@ mod dispatch_tests {
         assert!(app.picker.is_none());
         assert_eq!(app.active_highlight, Some(0));
         assert_eq!(app.focus, app::Focus::LogList);
+    }
+
+    #[test]
+    fn slash_opens_highlight_manage_when_groups_exist() {
+        use crate::highlight_model::HighlightGroup;
+        use crate::picker::{PickerKind, PickerMode};
+
+        let mut app = App::new(100);
+        let mut input = input::InputBox::default();
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("error").unwrap());
+        handle_normal_key(&mut app, &mut input, KeyCode::Char('/'));
+        let picker = app.picker.as_ref().expect("finder");
+        assert_eq!(picker.kind, PickerKind::Highlight);
+        assert_eq!(picker.mode, PickerMode::Manage);
+        let data = picker_render_data(&app, 10, 80).unwrap();
+        assert_eq!(data.labels, vec!["error".to_string()]);
+        assert!(!data.labels.iter().any(|l| l.contains("[Highlight]")));
+    }
+
+    #[test]
+    fn highlight_manage_enter_activates_enables_jumps_and_closes() {
+        use crate::highlight_model::HighlightGroup;
+        use crate::ui::ActionKind;
+
+        let mut app = App::new(100);
+        drain_lines(
+            &mut app,
+            &[
+                "04-02 10:00:00.000  1  1 I T   : aaa",
+                "04-02 10:00:00.000  1  1 I T   : error here",
+                "04-02 10:00:00.000  1  1 I T   : warn too",
+            ],
+        );
+        app.following = false;
+        app.cursor = 0;
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("error").unwrap());
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("warn").unwrap());
+        app.highlight_groups.groups[0].enabled = false;
+        app.open_highlight_finder();
+        let data = picker_render_data(&app, 10, 80).unwrap();
+        assert!(matches!(data.actions.first(), Some(ActionKind::Jump)));
+        handle_picker_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.picker.is_none());
+        assert!(app.highlight_groups.groups[0].enabled);
+        assert!(app.highlight_groups.groups[1].enabled);
+        assert_eq!(app.active_highlight, Some(0));
+        assert_eq!(app.cursor, 1);
+        assert_eq!(app.focus, app::Focus::LogList);
+        assert!(!app.view_focus.highlight);
+    }
+
+    #[test]
+    fn unified_enter_toggles_highlight_without_jump() {
+        use crate::highlight_model::HighlightGroup;
+
+        let mut app = App::new(100);
+        drain_lines(
+            &mut app,
+            &[
+                "04-02 10:00:00.000  1  1 I T   : aaa",
+                "04-02 10:00:00.000  1  1 I T   : error here",
+            ],
+        );
+        app.following = false;
+        app.cursor = 0;
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("error").unwrap());
+        let cursor_before = app.cursor;
+        let active_before = app.active_highlight;
+        app.open_unified_picker();
+        handle_picker_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.picker.is_some());
+        assert!(!app.highlight_groups.groups[0].enabled);
+        assert_eq!(app.active_highlight, active_before);
+        assert_eq!(app.cursor, cursor_before);
+    }
+
+    #[test]
+    fn highlight_manage_auto_new_and_clear_returns() {
+        use crate::highlight_model::HighlightGroup;
+        use crate::picker::{PickerKind, PickerMode};
+
+        let mut app = App::new(100);
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("error").unwrap());
+        app.open_highlight_finder();
+        assert_eq!(app.picker.as_ref().unwrap().mode, PickerMode::Manage);
+        for c in "zzz".chars() {
+            handle_picker_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+            );
+        }
+        let picker = app.picker.as_ref().unwrap();
+        assert_eq!(picker.mode, PickerMode::New);
+        assert_eq!(picker.draft.as_str(), "zzz");
+        assert!(picker.auto_from_manage);
+        for _ in 0..3 {
+            handle_picker_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+            );
+        }
+        let picker = app.picker.as_ref().unwrap();
+        assert_eq!(picker.kind, PickerKind::Highlight);
+        assert_eq!(picker.mode, PickerMode::Manage);
+        assert!(picker.query.is_empty());
+        assert!(!picker.auto_from_manage);
+    }
+
+    #[test]
+    fn highlight_new_er_does_not_steal_error() {
+        use crate::highlight_model::HighlightGroup;
+        use crate::picker::PickerKind;
+
+        let mut app = App::new(100);
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("error").unwrap());
+        app.open_picker_new(PickerKind::Highlight);
+        for c in "er".chars() {
+            handle_picker_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+            );
+        }
+        handle_picker_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.highlight_groups.groups.len(), 2);
+        assert_eq!(app.highlight_groups.groups[1].pattern, "er");
+        assert_eq!(app.active_highlight, Some(1));
+        assert!(app.picker.is_none());
+    }
+
+    #[test]
+    fn highlight_new_exact_ignore_case_reuses() {
+        use crate::highlight_model::HighlightGroup;
+        use crate::picker::PickerKind;
+
+        let mut app = App::new(100);
+        drain_lines(
+            &mut app,
+            &[
+                "04-02 10:00:00.000  1  1 I T   : aaa",
+                "04-02 10:00:00.000  1  1 I T   : ERROR boom",
+            ],
+        );
+        app.following = false;
+        app.cursor = 0;
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("error").unwrap());
+        app.open_picker_new(PickerKind::Highlight);
+        for c in "ERROR".chars() {
+            handle_picker_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+            );
+        }
+        handle_picker_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.highlight_groups.groups.len(), 1);
+        assert_eq!(app.active_highlight, Some(0));
+        assert_eq!(app.cursor, 1);
+        assert!(app.picker.is_none());
+    }
+
+    #[test]
+    fn highlight_new_empty_draft_lists_no_history() {
+        use crate::highlight_model::HighlightGroup;
+        use crate::picker::PickerKind;
+
+        let mut app = App::new(100);
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("error").unwrap());
+        app.open_picker_new(PickerKind::Highlight);
+        let data = picker_render_data(&app, 10, 80).unwrap();
+        assert!(data.labels.is_empty(), "empty New must not list history");
+        assert_eq!(data.empty_msg, "type a pattern");
+    }
+
+    #[test]
+    fn highlight_manage_delete_last_opens_new() {
+        use crate::highlight_model::HighlightGroup;
+        use crate::picker::{PickerKind, PickerMode};
+
+        let mut app = App::new(100);
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("error").unwrap());
+        app.open_highlight_finder();
+        handle_picker_key(&mut app, KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
+        handle_picker_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.highlight_groups.groups.is_empty());
+        let picker = app.picker.as_ref().expect("stays open");
+        assert_eq!(picker.kind, PickerKind::Highlight);
+        assert_eq!(picker.mode, PickerMode::New);
+        assert!(!picker.auto_from_manage);
+    }
+
+    #[test]
+    fn highlight_manage_delete_last_visible_auto_news() {
+        use crate::highlight_model::HighlightGroup;
+        use crate::picker::{PickerKind, PickerMode};
+
+        let mut app = App::new(100);
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("error").unwrap());
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("warn").unwrap());
+        app.open_highlight_finder();
+        for c in "war".chars() {
+            handle_picker_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+            );
+        }
+        assert_eq!(app.picker.as_ref().unwrap().mode, PickerMode::Manage);
+        handle_picker_key(&mut app, KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
+        handle_picker_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.highlight_groups.groups.len(), 1);
+        assert_eq!(app.highlight_groups.groups[0].pattern, "error");
+        let picker = app.picker.as_ref().unwrap();
+        assert_eq!(picker.kind, PickerKind::Highlight);
+        assert_eq!(picker.mode, PickerMode::New);
+        assert_eq!(picker.draft.as_str(), "war");
+        assert!(picker.auto_from_manage);
+    }
+
+    #[test]
+    fn highlight_new_reuses_disabled_and_jumps() {
+        use crate::highlight_model::HighlightGroup;
+        use crate::picker::PickerKind;
+
+        let mut app = App::new(100);
+        drain_lines(
+            &mut app,
+            &[
+                "04-02 10:00:00.000  1  1 I T   : aaa",
+                "04-02 10:00:00.000  1  1 I T   : ERROR boom",
+            ],
+        );
+        app.following = false;
+        app.cursor = 0;
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("error").unwrap());
+        app.highlight_groups.groups[0].enabled = false;
+        app.open_picker_new(PickerKind::Highlight);
+        for c in "ERROR".chars() {
+            handle_picker_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+            );
+        }
+        handle_picker_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.highlight_groups.groups.len(), 1);
+        assert!(app.highlight_groups.groups[0].enabled);
+        assert_eq!(app.active_highlight, Some(0));
+        assert_eq!(app.cursor, 1);
+        assert!(app.picker.is_none());
+        assert!(!app.view_focus.highlight);
     }
 
     #[test]
