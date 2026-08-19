@@ -515,3 +515,37 @@ Shipped two-level Help (Home + seven zone pages with design contracts), global i
 ### Next Steps
 
 - None - task complete
+
+
+## Session 16: Highlight find-or-create picker
+
+**Date**: 2026-08-19
+**Task**: Highlight find-or-create picker
+**Package**: alnav-core
+**Branch**: `master`
+
+### Summary
+
+LogList / is now Highlight find-or-create: search existing tags, Enter activates and jumps. Unified Manage Enter stays toggle; palette Add Highlight stays force New.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6100fc0` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
