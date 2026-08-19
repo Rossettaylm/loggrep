@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/alnav/backend/index.md", "reason": "Quality Check: Help Esc no resume; cargo test -p alnav; picker chrome"}
+{"file": ".trellis/spec/alnav/backend/directory-structure.md", "reason": "Highlight Manage must not reuse unified_picker_items; both render and key paths branched"}
+{"file": ".trellis/spec/alnav/backend/command-palette.md", "reason": "Add Highlight remains force New; Find Highlight is /; no second CommandId enum"}
+{"file": ".trellis/spec/alnav/backend/status-help.md", "reason": "Help copy English; / Help vs LogList finder; close_help does not resume following"}
+{"file": ".trellis/spec/alnav/backend/quality-guidelines.md", "reason": "Forbidden: Color in ui.rs, UnifiedKind abuse, tests not rewritten after behavior change"}
+{"file": ".trellis/spec/alnav/backend/session-filters.md", "reason": "Activate must not set view_focus; fh stays an independent verb"}

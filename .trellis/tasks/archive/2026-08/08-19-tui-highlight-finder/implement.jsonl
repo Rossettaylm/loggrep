@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/alnav/backend/index.md", "reason": "Pre-Development Checklist: picker Manage, command palette, status-help, fuzzy, quality"}
+{"file": ".trellis/spec/alnav/backend/directory-structure.md", "reason": "Picker session dispatch: per-kind Manage must branch in picker_render_data and handle_picker_key; UnifiedKind is aggregate-only"}
+{"file": ".trellis/spec/alnav/backend/command-palette.md", "reason": "ActionStore dispatch + PALETTE_IDS/titles; Add Highlight vs Find Highlight split"}
+{"file": ".trellis/spec/alnav/backend/fuzzy-matching.md", "reason": "Manage candidate filter is nucleo Pattern::parse; Highlight New vocab vs LogList substring"}
+{"file": ".trellis/spec/alnav/backend/status-help.md", "reason": "LogList / is Highlight finder when Help is closed; Help / must not steal it"}
+{"file": ".trellis/spec/alnav/backend/quality-guidelines.md", "reason": "Picker kind branch completeness; HintEntry-only Help copy; modal Ctrl+C"}
+{"file": ".trellis/spec/alnav/backend/async-scans.md", "reason": "Activate may enable a group and must restart file highlight scan before n/N jump"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse jump_first_match_of, filtered_indices, Bookmark-style per-kind Manage helpers"}
