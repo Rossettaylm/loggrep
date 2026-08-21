@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 16
-- **Last Active**: 2026-08-19
+- **Total Sessions**: 17
+- **Last Active**: 2026-08-21
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~551 | Active |
+| `journal-1.md` | ~585 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 17 | 2026-08-21 | Bookmark compare tray | `7b20304` | `master` |
 | 16 | 2026-08-19 | Highlight find-or-create picker | `6100fc0` | `master` |
 | 15 | 2026-08-17 | Two-level Help panel with search | `5a5a5eb` | `master` |
 | 14 | 2026-08-14 | Severe row red + Global C-f/C-g | `5e4b89c` | `master` |

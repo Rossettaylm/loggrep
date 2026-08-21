@@ -549,3 +549,37 @@ LogList / is now Highlight find-or-create: search existing tags, Enter activates
 ### Next Steps
 
 - None - task complete
+
+
+## Session 17: Bookmark compare tray
+
+**Date**: 2026-08-21
+**Task**: Bookmark compare tray
+**Package**: alnav-core
+**Branch**: `master`
+
+### Summary
+
+Replaced session bookmarks with a snapshot compare tray: ma toggle, time-sorted mm panel with Δt, one-line summary, cap 16. Archived 08-20-bookmark-compare-tray.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7b20304` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
