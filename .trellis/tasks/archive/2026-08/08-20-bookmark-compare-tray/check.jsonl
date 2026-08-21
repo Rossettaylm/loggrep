@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/alnav/backend/index.md", "reason": "Quality Check: modal Ctrl+C; cargo test -p alnav; popup chrome; Help Esc no resume"}
+{"file": ".trellis/spec/alnav/backend/directory-structure.md", "reason": "Compare panel is not a per-kind Picker Manage; HashSet must stay synced on dd/toggle"}
+{"file": ".trellis/spec/alnav/backend/quality-guidelines.md", "reason": "Forbidden Color in ui.rs; deleted picker arms must not leave tests; fmt -p alnav"}
+{"file": ".trellis/spec/alnav/backend/status-help.md", "reason": "Help copy English; compare panel keys vs pending_m; close does not resume following"}
+{"file": ".trellis/spec/alnav/backend/theme-system.md", "reason": "Δt/summary styles via tokens; bookmark_stale for ☆"}
+{"file": ".trellis/spec/alnav/backend/command-palette.md", "reason": "BookmarkManage still one ActionId; title matches compare not Manage"}

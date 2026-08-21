@@ -1,0 +1,26 @@
+{
+  "id": "bookmark-compare-tray",
+  "name": "bookmark-compare-tray",
+  "title": "Bookmark compare tray",
+  "description": "Replace session bookmarks (add-order strip + fzf Manage) with snapshot compare tray: 16-cap, time-sorted panel with Δt, one-line summary, minimal keys."
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": "alnav",
+  "priority": "P2",
+  "creator": "lymanyang",
+  "assignee": "lymanyang",
+  "createdAt": "2026-08-20",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/alnav/backend/index.md", "reason": "Pre-Development Checklist: quality, status-help, theme, directory-structure picker vs new modal"}
+{"file": ".trellis/spec/alnav/backend/directory-structure.md", "reason": "Bookmark HashSet lockstep; mm must not stay on PickerKind::Bookmark; do not use UnifiedKind"}
+{"file": ".trellis/spec/alnav/backend/quality-guidelines.md", "reason": "No Color in ui.rs; no Bookmark.enabled; popup chrome; rewrite tests after mm surface change; fmt -p alnav only"}
+{"file": ".trellis/spec/alnav/backend/status-help.md", "reason": "English Help/status; new compare ContextKind; Esc/Ctrl+C close without resume_following; help_available while modal open"}
+{"file": ".trellis/spec/alnav/backend/theme-system.md", "reason": "bookmark_row_bg / strip tokens; new Δt prefix token must go through theme.rs"}
+{"file": ".trellis/spec/alnav/backend/command-palette.md", "reason": "BookmarkManage palette title/when; dispatch is ActionStore not a second enum"}
+{"file": ".trellis/spec/alnav/backend/stream-visible-ingest.md", "reason": "Live eviction vs snapshot display; jump still uses visible_idx_for_row_id"}
+{"file": ".trellis/spec/alnav/backend/file-store.md", "reason": "File pin copies row_at snapshot; row_id = line_index+1 jump path unchanged"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse render_entry_lines, jump_to_bookmark, apply_yank; do not spawn a second full LogList keymap"}
