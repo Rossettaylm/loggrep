@@ -799,13 +799,6 @@ fn entry_text_styles(row: &EntryRow) -> (Style, Style) {
     (base.add_modifier(Modifier::BOLD), base)
 }
 
-/// Renders one log entry as one or more physical `Line`s: a header
-/// (lineno/timestamp/level/fixed tag column) followed by the message,
-/// word-wrapped to `area_width`. The tag field uses a fixed column (pad /
-/// truncate with `…`) so messages align; continuation lines indent with
-/// spaces matching the header width.
-/// `lineno` is 1-based within the visible set; `lineno_width` is the digit
-/// width used for right-aligned padding.
 fn render_entry_lines(
     row: &EntryRow,
     patterns: &[PaintPattern<'_>],
@@ -813,11 +806,55 @@ fn render_entry_lines(
     lineno: usize,
     lineno_width: usize,
 ) -> Vec<Line<'static>> {
-    let lineno_s = format!("{lineno:>lineno_width$} ");
+    render_entry_lines_ex(
+        row,
+        patterns,
+        area_width,
+        Some((lineno, lineno_width)),
+        false,
+    )
+}
+
+fn render_compare_entry_lines(
+    row: &EntryRow,
+    patterns: &[PaintPattern<'_>],
+    area_width: usize,
+) -> Vec<Line<'static>> {
+    render_entry_lines_ex(row, patterns, area_width, None, true)
+}
+
+/// Renders one log entry as one or more physical `Line`s: a header
+/// (optional lineno / timestamp / optional pid·tid / level / fixed tag column)
+/// followed by the message, word-wrapped to `area_width`.
+fn render_entry_lines_ex(
+    row: &EntryRow,
+    patterns: &[PaintPattern<'_>],
+    area_width: usize,
+    lineno: Option<(usize, usize)>,
+    show_pid_tid: bool,
+) -> Vec<Line<'static>> {
+    let lineno_s = match lineno {
+        Some((n, w)) => format!("{n:>w$} "),
+        None => String::new(),
+    };
     let ts = format!("{} ", row.timestamp);
+    let pid_s = if show_pid_tid && !row.pid.is_empty() {
+        format!("{} ", row.pid)
+    } else {
+        String::new()
+    };
+    let tid_s = if show_pid_tid && !row.tid.is_empty() {
+        format!("{} ", row.tid)
+    } else {
+        String::new()
+    };
     let level_badge = format!(" {} ", row.level.as_char());
-    let prefix_without_tag =
-        lineno_s.chars().count() + ts.chars().count() + level_badge.chars().count() + LEVEL_TAG_GAP;
+    let prefix_without_tag = lineno_s.chars().count()
+        + ts.chars().count()
+        + pid_s.chars().count()
+        + tid_s.chars().count()
+        + level_badge.chars().count()
+        + LEVEL_TAG_GAP;
     let tag_col = tag_col_for_area(area_width, prefix_without_tag);
     let header_width = prefix_without_tag + tag_col + TAG_MSG_GAP;
     let cont_prefix: String = " ".repeat(header_width);
@@ -844,11 +881,19 @@ fn render_entry_lines(
         .map(|(i, range)| {
             let mut spans = Vec::new();
             if i == 0 {
-                spans.push(Span::styled(
-                    lineno_s.clone(),
-                    theme::muted().add_modifier(Modifier::DIM),
-                ));
+                if !lineno_s.is_empty() {
+                    spans.push(Span::styled(
+                        lineno_s.clone(),
+                        theme::muted().add_modifier(Modifier::DIM),
+                    ));
+                }
                 spans.push(Span::styled(ts.clone(), theme::muted()));
+                if !pid_s.is_empty() {
+                    spans.push(Span::styled(pid_s.clone(), theme::muted()));
+                }
+                if !tid_s.is_empty() {
+                    spans.push(Span::styled(tid_s.clone(), theme::muted()));
+                }
                 spans.push(Span::styled(
                     level_badge.clone(),
                     theme::level_badge_style(row.level),
@@ -1101,10 +1146,10 @@ pub fn build_minimap_marks(app: &App, height: u16) -> Vec<MinimapMark> {
     // parse all visible rows (FileStore would O(n) parse multi-million files).
     if !app.bookmarks.items.is_empty() {
         for bm in &app.bookmarks.items {
-            if !app.bookmark_alive(bm.row_id) {
+            if !app.bookmark_alive(bm.row_id()) {
                 continue;
             }
-            if let Some(i) = app.visible_idx_for_row_id(bm.row_id) {
+            if let Some(i) = app.visible_idx_for_row_id(bm.row_id()) {
                 let r = minimap_row_for_index(i, n, h);
                 if cells[r] < MinimapMark::Bookmark {
                     cells[r] = MinimapMark::Bookmark;
@@ -1186,13 +1231,11 @@ pub fn render_log_list(app: &mut App, frame: &mut Frame, area: Rect) {
         width: content_w,
         height: inner.height,
     };
-    // M2: bookmark strip embedded at top of Log (collapsed when empty).
-    // Height = wrapped lines for ≤3 recent bookmarks, capped at 40% of content.
-    let bm_max_h = bookmark_strip_max_height(content_area.height);
-    let bm_lines = if app.bookmarks.display_recent().is_empty() || content_area.height <= 1 {
+    // M2: one-line compare-tray summary at top of Log (folded when empty).
+    let bm_lines = if app.bookmarks.is_empty() || content_area.height <= 1 {
         Vec::new()
     } else {
-        build_bookmark_strip_lines(app, content_area.width, bm_max_h)
+        vec![bookmark_summary_line(&app.bookmarks.summary_line())]
     };
     let bm_h = bm_lines.len() as u16;
     let (bm_area_opt, list_area) = if bm_h > 0 && content_area.height > bm_h {
@@ -1297,59 +1340,16 @@ pub fn render_log_list(app: &mut App, frame: &mut Frame, area: Rect) {
     }
 }
 
-/// Soft cap: bookmark strip uses at most 40% of the Log content height.
-pub fn bookmark_strip_max_height(content_h: u16) -> u16 {
-    ((u32::from(content_h) * 2) / 5).max(1) as u16
+/// One-line Log-top compare-tray summary.
+fn bookmark_summary_line(text: &str) -> Line<'static> {
+    let painted = text.replacen('★', theme::GLYPH_BOOKMARK_PIN, 1);
+    Line::from(Span::styled(
+        format!(" {painted}"),
+        theme::bookmark_label_style(),
+    ))
 }
 
-/// Build wrapped strip lines for up to [`crate::bookmark::BOOKMARK_DISPLAY_N`]
-/// newest bookmarks, truncated to `max_h` physical rows (no `…` ellipsis).
-pub fn build_bookmark_strip_lines(app: &App, width: u16, max_h: u16) -> Vec<Line<'static>> {
-    if max_h == 0 || width == 0 {
-        return Vec::new();
-    }
-    let text_cols = width.saturating_sub(3) as usize;
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    for bm in app.bookmarks.display_recent() {
-        if lines.len() >= max_h as usize {
-            break;
-        }
-        let alive = app.bookmark_alive(bm.row_id);
-        let (mark, style) = if alive {
-            ("★", theme::bookmark_label_style())
-        } else {
-            ("☆", theme::bookmark_stale_style())
-        };
-        let mut first = true;
-        // Preserve hard newlines in msg, then wrap each logical line by width.
-        for logical in bm.label.split('\n') {
-            let ranges = if text_cols == 0 {
-                vec![(0usize, 0usize)]
-            } else {
-                wrap_ranges(logical, text_cols)
-            };
-            for (s, e) in ranges {
-                if lines.len() >= max_h as usize {
-                    break;
-                }
-                let chunk = logical.get(s..e).unwrap_or("").to_string();
-                let text = if first {
-                    first = false;
-                    format!(" {mark} {chunk}")
-                } else {
-                    format!("   {chunk}")
-                };
-                lines.push(Line::from(Span::styled(text, style)));
-            }
-            if lines.len() >= max_h as usize {
-                break;
-            }
-        }
-    }
-    lines
-}
-
-/// M2: up to 3 newest bookmarks inside the Log region (wrapped, height-capped).
+/// M2: one summary line inside the Log region.
 pub fn render_bookmark_strip(frame: &mut Frame, area: Rect, lines: Vec<Line<'static>>) {
     if area.height == 0 {
         return;
@@ -2691,9 +2691,6 @@ pub fn render_picker_search_line(
 pub enum PickerRightPane<'a> {
     /// Filter/Highlight-style sampled log hits.
     Hits(&'a [crate::preview::PreviewHit]),
-    /// Bookmark panel: reuse `p` Fields detail for the selected row.
-    /// `None` means the bookmarked row is missing/evicted.
-    Detail(Option<&'a crate::model::EntryRow>),
     /// Preset panel: chip-strip style Filter → Exclude → Highlight.
     ChipRules(&'a [Line<'static>]),
     /// Open-file head preview (plain text lines).
@@ -2771,9 +2768,6 @@ pub fn render_picker(
         match right_pane {
             PickerRightPane::Hits(preview_lines) => {
                 render_preview("Preview", preview_lines, "no preview", frame, right);
-            }
-            PickerRightPane::Detail(row) => {
-                render_picker_detail(row, frame, right);
             }
             PickerRightPane::ChipRules(lines) => {
                 render_preset_rules_preview(lines, frame, right);
@@ -2961,7 +2955,6 @@ fn confirm_dialog_question(confirm: &crate::picker::ConfirmKind) -> String {
                 format!("Delete {} items?", items.len())
             }
         }
-        crate::picker::ConfirmKind::DeleteBookmark { .. } => "Delete bookmark?".to_string(),
         crate::picker::ConfirmKind::DeletePreset { name } => format!("Delete preset '{name}'?"),
     }
 }
@@ -3515,6 +3508,91 @@ pub fn help_modal_height(frame: Rect, content_rows: usize) -> u16 {
 /// Vertically centered Help shell (unlike Input/Search which stay near the top).
 pub fn help_modal_rect(frame: Rect, width: u16, content_rows: usize) -> Rect {
     centered_modal_rect(frame, width, help_modal_height(frame, content_rows))
+}
+
+/// Large rounded compare tray covering most of the frame (the main log).
+pub fn compare_modal_rect(frame: Rect) -> Rect {
+    let width = frame.width.saturating_sub(4).max(40);
+    let height = frame.height.saturating_sub(4).max(8);
+    centered_modal_rect(frame, width, height)
+}
+
+/// Bookmark compare list: log paint + Δt / stale prefixes. Always wraps.
+pub fn render_compare_panel(app: &mut App, frame: &mut Frame, area: Rect) {
+    let Some(_) = app.compare.as_ref() else {
+        return;
+    };
+    let inner = render_modal_shell_glyph(theme::GLYPH_BOOKMARK, "Bookmark Compare", frame, area);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let sorted = app.bookmarks.sorted_indices();
+    let deltas = app.bookmarks.delta_labels();
+    let delta_col = deltas
+        .iter()
+        .map(|d| {
+            d.as_deref()
+                .unwrap_or("")
+                .chars()
+                .count()
+                .max(theme::GLYPH_COMPARE_UNTIMED.chars().count())
+        })
+        .max()
+        .unwrap_or(1);
+    let prefix_w = 1 + 1 + delta_col + 1; // mark space delta space
+    let entry_w = (inner.width as usize).saturating_sub(prefix_w).max(8);
+    let patterns = app.highlight_groups.paint_patterns(app.active_highlight);
+    let cursor = app.compare.as_ref().map(|p| p.cursor).unwrap_or(0);
+
+    let mut items: Vec<ListItem> = Vec::with_capacity(sorted.len());
+    for (display_i, &storage) in sorted.iter().enumerate() {
+        let row = app.bookmarks.items[storage].row.clone();
+        let row_id = row.row_id;
+        let jumpable = app.visible_idx_for_row_id(row_id).is_some();
+        let stale = !jumpable;
+        let mark = if stale {
+            theme::GLYPH_BOOKMARK_STALE_MARK
+        } else {
+            " "
+        };
+        let delta_text = deltas
+            .get(display_i)
+            .and_then(|d| d.as_deref())
+            .unwrap_or("");
+        let delta_pad = format!("{delta_text:>delta_col$}");
+        let mut lines = render_compare_entry_lines(&row, &patterns, entry_w);
+        if let Some(first) = lines.first_mut() {
+            let mut prefix = vec![
+                Span::styled(
+                    format!("{mark} "),
+                    if stale {
+                        theme::bookmark_stale_style()
+                    } else {
+                        Style::default()
+                    },
+                ),
+                Span::styled(format!("{delta_pad} "), theme::compare_delta_style()),
+            ];
+            prefix.append(&mut first.spans);
+            *first = Line::from(prefix);
+        }
+        let mut item = ListItem::new(lines);
+        if display_i == cursor {
+            item = item.style(theme::log_selection_style());
+        }
+        items.push(item);
+    }
+
+    let list = List::new(items);
+    let mut state =
+        ListState::default().with_offset(app.compare.as_ref().map(|p| p.list_offset).unwrap_or(0));
+    if !sorted.is_empty() {
+        state.select(Some(cursor.min(sorted.len() - 1)));
+    }
+    frame.render_stateful_widget(list, inner, &mut state);
+    if let Some(panel) = app.compare.as_mut() {
+        panel.list_offset = state.offset();
+    }
 }
 
 const DASHBOARD_MAX_WIDTH: u16 = 72;
@@ -6079,15 +6157,7 @@ mod tests {
     }
 
     #[test]
-    fn bookmark_strip_max_height_is_forty_percent() {
-        assert_eq!(bookmark_strip_max_height(10), 4);
-        assert_eq!(bookmark_strip_max_height(5), 2);
-        assert_eq!(bookmark_strip_max_height(1), 1);
-        assert_eq!(bookmark_strip_max_height(0), 1);
-    }
-
-    #[test]
-    fn build_bookmark_strip_lines_wraps_without_ellipsis() {
+    fn bookmark_summary_is_one_line_not_wrapped_bodies() {
         let mut app = App::new(100);
         let (tx, rx) = std::sync::mpsc::channel();
         let long_msg = "word ".repeat(20);
@@ -6098,38 +6168,8 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        drop(tx);
-        app.drain(&rx);
-        app.cursor = 0;
-        app.bookmark_add_current();
-
-        let width = 40u16;
-        let max_h = bookmark_strip_max_height(50);
-        let lines = build_bookmark_strip_lines(&app, width, max_h);
-        assert!(lines.len() > 1, "long msg must wrap to multiple strip rows");
-        assert!(lines.len() as u16 <= max_h);
-        let joined: String = lines
-            .iter()
-            .map(|l| {
-                l.spans
-                    .iter()
-                    .map(|s| s.content.as_ref())
-                    .collect::<String>()
-            })
-            .collect();
-        assert!(
-            !joined.contains('…'),
-            "strip must not ellipsize msg within soft cap: {joined:?}"
-        );
-        assert!(joined.contains("word"), "msg content preserved");
-    }
-
-    #[test]
-    fn build_bookmark_strip_lines_respects_height_cap() {
-        let mut app = App::new(100);
-        let (tx, rx) = std::sync::mpsc::channel();
         tx.send(
-            crate::model::EntryRow::from_line("04-02 10:00:00.000  1  1 I Tag     : short")
+            crate::model::EntryRow::from_line("04-02 10:00:08.000  1  1 I Tag     : later")
                 .unwrap(),
         )
         .unwrap();
@@ -6137,15 +6177,40 @@ mod tests {
         app.drain(&rx);
         app.cursor = 0;
         app.bookmark_add_current();
-        let row_id = app.bookmarks.items[0].row_id;
-        // Inject a long multi-line label (msg may contain hard newlines).
-        app.update_bookmark_label(
-            row_id,
-            format!("04-02 10:00:00.000 I Tag line1\n{}", "x".repeat(200)),
-        );
+        app.cursor = 1;
+        app.bookmark_add_current();
+        let line = app.bookmarks.summary_line();
+        assert_eq!(line, "★ 2  10:00:00→10:00:08");
+        let painted = bookmark_summary_line(&line);
+        assert_eq!(painted.spans.len(), 1);
+        assert!(!line.contains("word"), "summary must not embed pin bodies");
+    }
 
-        let lines = build_bookmark_strip_lines(&app, 30, 3);
-        assert_eq!(lines.len(), 3, "must truncate to max_h physical rows");
+    #[test]
+    fn compare_panel_paints_pid_and_ignores_collapsed_view() {
+        let mut app = App::new(100);
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(
+            crate::model::EntryRow::from_line("04-02 10:00:00.000  42  99 I Tag     : hello")
+                .unwrap(),
+        )
+        .unwrap();
+        drop(tx);
+        app.drain(&rx);
+        app.cursor = 0;
+        app.bookmark_add_current();
+        app.collapsed_view = true;
+        app.open_compare_panel();
+        let backend = TestBackend::new(80, 16);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_compare_panel(&mut app, frame, frame.area()))
+            .unwrap();
+        let content = cell_text(terminal.backend().buffer());
+        assert!(content.contains("Bookmark Compare"), "{content}");
+        assert!(content.contains("42"), "pid must render: {content}");
+        assert!(content.contains("99"), "tid must render: {content}");
+        assert!(content.contains("hello"), "{content}");
     }
 
     #[test]

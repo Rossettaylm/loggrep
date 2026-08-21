@@ -37,6 +37,10 @@ pub const GLYPH_TITLE_HIGHLIGHT: &str = "\u{f0e0}"; //
 pub const GLYPH_GROUP_ON: &str = "\u{f192}"; //
 pub const GLYPH_GROUP_OFF: &str = "\u{f10c}"; //
 pub const GLYPH_BOOKMARK: &str = "\u{f02e}"; // nf-fa-bookmark
+/// Log-top compare-tray summary and panel stale mark (not the nerdfont pin).
+pub const GLYPH_BOOKMARK_PIN: &str = "★";
+pub const GLYPH_BOOKMARK_STALE_MARK: &str = "☆";
+pub const GLYPH_COMPARE_UNTIMED: &str = "—";
 pub const GLYPH_ACTION_JUMP: &str = "\u{f061}"; //  nf-fa-arrow_right
 pub const GLYPH_ACTION_TOGGLE_ON: &str = "\u{f205}"; //  nf-fa-toggle_on
 pub const GLYPH_ACTION_TOGGLE_OFF: &str = "\u{f204}"; //  nf-fa-toggle_off
@@ -939,6 +943,11 @@ pub fn bookmark_stale_style() -> Style {
     Style::default()
         .fg(t().border_inactive)
         .add_modifier(Modifier::DIM | Modifier::CROSSED_OUT)
+}
+
+/// Compare-panel Δt prefix (`+1.2s` / `—`).
+pub fn compare_delta_style() -> Style {
+    muted().add_modifier(Modifier::DIM)
 }
 
 /// Unified Manage list: kind prefix / row tint by category.

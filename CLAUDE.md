@@ -69,7 +69,7 @@ alnav/src/
 ├── ui.rs           # 渲染：log/strip + fzf 左右面板/确认框/Preview/Time 面板 + status_bar
 ├── help.rs         # H6 键位：两级 Help（Home Active≤4 + 七区页面）+ `/` 子串搜索；Esc/`?` 关面板不 resume；`h`/Backspace 回 Home；status 空闲仅 1–2 键；flash 为中间填充 pill（3s）
 ├── export.rs       # H10：当前 Filter/Exclude/lock/time_bound → 一行 `alnav grep` CLI（`yc`）
-├── bookmark.rs     # M2：会话书签（row_id 锚定；ma/md；顶区展示 + Picker 管理）
+├── bookmark.rs     # 对照盘：快照钉（上限 16）；ma 开关 / md 删；mm 大面板；顶栏一行摘要
 ├── config.rs       # 配置目录解析 + config.toml（含 theme=）+ theme.toml overlay（坏文件回退）
 ├── palette.rs      # Palette、name fold、mix、contrast_fg
 ├── theme_builtins.rs # 九套内置 Palette 常量
@@ -109,7 +109,7 @@ alnav/src/
 - **`alnav` 字段详情 / Pretty overlay（H4/H5）**：LogList `p` 开关浮层（开→Fields，关→Closed）；`P` 开 Pretty 或在 Fields↔Pretty 间切换；靠上 `render_modal_shell`；Pretty 对 msg（失败再试 raw）做 JSON 缩进，非法则原文 + `not JSON`；内容随 `current_row`；Esc **只关浮层**不 `resume_following`；浮层内 `j`/`k`/`c`/`C`+字段仍可用。
 - **`alnav` 导出 CLI（H10）**：LogList `y` `c` 将当前启用 Filter 组（组内 AND、组间 OR）、启用 Excludes（`not …`）、H8 lock（`--pid`/`--tid`）、全局时间窗（`--since`/`--until`）编码为一行 `alnav grep -f…|-i` / `--hdc` / `--adb` 命令（统一 `-e` + `-i`；不含 Search / `di` 禁用项）；复用 yank 剪贴板与 `YANKED` status。近似一致即可（环形缓冲截断可接受）。
 - **`alnav` 边轨 minimap（H3）**：Log 边框内侧 1 列只读轨；比例基准为 `visible`；标记严重(E/F/crash)、启用 search 命中、当前视口淡段；重叠时严重优先；`visible` 非空即画极淡轨；样式走 `theme::minimap_*`；每帧扫描预算约 4000。
-- **`alnav` 书签（M2）**：ingest 单调 `EntryRow.row_id`；`ma` 收藏当前行、`md` 删除当前行书签，`mm` 以 Manage / `MM` 以 New 打开 Bookmark Picker，`Space m` 同 Manage；Log 顶内嵌最多 3 条最近书签（空则折叠，软上限 50）；行同时在 `rows`/`matched` 任一存活即可跳，两个缓冲均淘汰才失效不可跳；进程退出丢弃。
+- **`alnav` 书签（对照盘）**：钉住时拷贝 `EntryRow` 快照；`ma` 开关当前行、`md` 按当前 origin 删除，`mm` 打开对照大面板（空则 `NO BOOKMARKS`）。Log 顶一行摘要 `★ N` + 时间跨度（空则折叠）；按日志时间排序并显示相对上一条的 Δt；上限 16。面板键仅 `j/k` `g/G` `yy` `dd` `Enter` `Esc`。原行仍在 `visible` 才能跳；过滤/淘汰标 ☆，快照仍可对照。进程退出丢弃。
 - **`alnav` 配置外置**：启动时从配置目录读取 `theme.toml` 与 `config.toml`（默认 `~/.config/alnav`，`$ALNAV_HOME`/`--config-path DIR` 可覆盖）；`config.toml` 的 `theme` 选内置 Palette（`default` / `onedark` / `dracula` / `everforest` / `tokyo-night` / `catppuccin-mocha` / `gruvbox-dark` / `nord` / `kanagawa`），并配置 `picker_left_ratio` 等；`theme.toml` 是 overlay（`[palette]` 先合并，语义 token 后覆盖）；`logcolor` 仅服务 CLI。示例见 `alnav/examples/`。
 - **`alnav` 边轨 minimap（H3）**：Log 边框内侧右侧 1 列；比例相对当前 `visible`；标记视口淡段 / 启用 search 命中 / 严重(E/F/crash)，重叠时严重优先；`visible` 非空即画极淡轨；样式仅走 `theme::minimap_*`；每帧采样上限约 4000。
 

@@ -15,7 +15,7 @@ behavior from CLAUDE.md when implementing filters, pickers, or modals.
 
 | Guide | Description | Status |
 |-------|-------------|--------|
-| [Directory Structure](./directory-structure.md) | Module layout + picker/time_panel/ActionStore ownership | Active |
+| [Directory Structure](./directory-structure.md) | Module layout + picker/compare tray/time_panel/ActionStore ownership | Active |
 | [Command Palette + ActionStore](./command-palette.md) | `C-p` palette, `when`/`catalog`/`dispatch` | Active |
 | [Session Filters](./session-filters.md) | Lock + global `App.time_bound` contracts | Active |
 | [TUI Fuzzy Matching](./fuzzy-matching.md) | nucleo-matcher contracts for Picker/Filter/Highlight | Active |
@@ -43,7 +43,8 @@ behavior from CLAUDE.md when implementing filters, pickers, or modals.
 - [ ] Read [status-help.md](./status-help.md) before changing status-bar hints, flash language, or Help (`?`) keys/scroll.
 - [ ] Read [tui-ux-boosters.md](./tui-ux-boosters.md) before changing `DetailView::Pretty`'s crash branch, `SummaryView`/`summary_gen`, the disconnect icon, or `App.collapsed_view`.
 - [ ] Read [theme-system.md](./theme-system.md) before changing `theme.rs` / `palette.rs` / `theme.toml` / `config.toml` `theme`.
-- [ ] Touching picker Manage: read Directory Structure "Picker session dispatch".
+- [ ] Touching picker Manage: read Directory Structure "Picker session dispatch". Bookmarks use the compare tray (`App.compare`), not `PickerKind::Bookmark`.
+- [ ] Touching bookmarks / `mm` / `ma`: read Directory Structure "Bookmark compare tray" and keep `bookmark_row_ids` in lockstep.
 - [ ] Read [command-palette.md](./command-palette.md) before changing `C-p` / `action::dispatch` / palette catalog / `when`.
 - [ ] Read Directory Structure "Global source / preset chords" before changing `C-f`/`C-g`/`C-s`/`C-o` or Dashboard key dispatch. Do not default-bind `C-S-<letter>`.
 - [ ] Severe log tag/msg paint goes through `theme::severe_entry_style` (see [theme-system.md](./theme-system.md)); do not hard-code red in `ui.rs`.
@@ -58,6 +59,7 @@ behavior from CLAUDE.md when implementing filters, pickers, or modals.
 - [ ] File highlight stats / `n`/`N` use hit index (no UI O(visible) `row_at`); FilterBatch does not full-parse.
 - [ ] New modal key paths handle Ctrl+C as cancel when appropriate.
 - [ ] Command palette is not a `PickerSession`; empty query lists nothing; idle status has no third `C-p` hint.
+- [ ] Bookmark `mm` is `App.compare`, not a picker; `help_available` is false while compare is open; Esc/Ctrl+C close without `resume_following`; `bookmark_row_ids` stays synced on `ma` toggle and panel `dd`.
 - [ ] Popup shells stay rounded; strips stay divider; confirm uses the same `picker_area` as the picker.
 - [ ] TUI paint goes through `theme::*` tokens (palette-mapped). CLI colored output stays on `alnav::logcolor`.
 - [ ] Status hints / Help copy stay in `help.rs` (`HintEntry`); two-level Help (Home + 7 pages); Esc/`?`/Ctrl+C close without `resume_following`; `h`/Backspace back; LogList/Help `J`/`K` share `FAST_SCROLL_STEP`.

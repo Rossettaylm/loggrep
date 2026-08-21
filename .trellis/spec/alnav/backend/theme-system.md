@@ -187,6 +187,10 @@ plain Error. Plain E-level is red without Bold.
 Do **not** paint the whole `ListItem` red, and do **not** hard-code `Color::Red`
 in `ui.rs`.
 
+Compare-tray Δt / untimed `—` uses `theme::compare_delta_style()` (`muted` + DIM).
+Stale origin mark `☆` uses `theme::bookmark_stale_style()`. Do not inline those
+colors in `ui.rs`.
+
 ### Mix (named themes with RGB `background` only)
 
 | Token | Mix |

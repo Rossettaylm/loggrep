@@ -49,7 +49,7 @@ Update this spec when changing:
 
 **Open / close**
 
-- Open only when `command_palette_available()`: `Focus` ∈ {LogList, ChipStrip, ExcludeStrip, HighlightStrip}, `Mode::Normal`, and none of picker / time / detail / highlight-edit / help / summary / dashboard / open-file / stream / preset-name / already-open palette.
+- Open only when `command_palette_available()`: `Focus` ∈ {LogList, ChipStrip, ExcludeStrip, HighlightStrip}, `Mode::Normal`, and none of picker / time / detail / highlight-edit / help / summary / dashboard / open-file / stream / preset-name / compare tray / already-open palette.
 - Pending chords **are** allowed: open clears them (`c` then `C-p` opens the palette).
 - Esc / Ctrl+C → `close_command_palette()` (same as Help/Detail: no resume follow).
 - Enter with hits → close, then `dispatch(selected id)`. Zero hits → Enter no-op, stay open.
@@ -88,13 +88,14 @@ Update this spec when changing:
 - Help catalog includes `GlobalCommandPalette` (`C-p` / `palette`).
 - Idle status bar stays two hints (`? help`, `; filter`). Do **not** add idle `C-p`.
 - Palette open → `help_available` false; status L2 is the palette context.
+- `BookmarkManage` palette title is **Open Compare Panel** (same `ActionId`; dispatch opens `App.compare`, not a picker).
 - Highlight catalog: **Find Highlight** (`GlobalHighlightNew`, `/`) is find-or-create; **Add Highlight** (`GlobalHighlightAdd`, unbound) is always `open_picker_new`. Do not merge them back into one dispatch.
 
 ### 4. Validation & Error Matrix
 
 | Condition | Behavior |
 |-----------|----------|
-| `C-p` while Detail/Picker/Help/Time open | Palette does not open |
+| `C-p` while Detail/Picker/Help/Time/Compare open | Palette does not open |
 | `C-p` while `pending_chip` | Opens palette; pending cleared |
 | Empty query Enter | No-op |
 | Zero-match Enter | No-op; dim empty row stays |

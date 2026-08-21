@@ -874,10 +874,9 @@ fn run<B: ratatui::backend::Backend>(
                         picker_render_data(app, preview_limit, preview_inner_w)
                     {
                         let picker_area = ui::picker_frame_rect(frame_area, data.show_preview);
-                        let right_pane = match (&data.detail_row, &data.preset_preview) {
-                            (Some(row), _) => ui::PickerRightPane::Detail(row.as_ref()),
-                            (None, Some(lines)) => ui::PickerRightPane::ChipRules(lines),
-                            (None, None) => ui::PickerRightPane::Hits(&data.preview),
+                        let right_pane = match &data.preset_preview {
+                            Some(lines) => ui::PickerRightPane::ChipRules(lines),
+                            None => ui::PickerRightPane::Hits(&data.preview),
                         };
                         hw_cursor = ui::render_picker(
                             &data.title,
@@ -972,6 +971,9 @@ fn run<B: ratatui::backend::Backend>(
                         hw_cursor = ui::render_time_panel(app, frame, area);
                     } else if app.command_palette.is_some() {
                         hw_cursor = ui::render_command_palette(app, frame, frame_area);
+                    } else if app.compare.is_some() {
+                        let area = ui::compare_modal_rect(frame_area);
+                        ui::render_compare_panel(app, frame, area);
                     } else if app.help_open {
                         let content_rows = crate::help::help_body_lines(app).len().max(1);
                         let area = ui::help_modal_rect(frame_area, modal_w.max(56), content_rows);
@@ -1019,6 +1021,9 @@ fn run<B: ratatui::backend::Backend>(
             // Mouse wheel always scrolls the log list, independent of `app.focus` —
             // see `handle_mouse_event`'s doc comment for why (no click-to-focus yet).
             Event::Mouse(mouse) => {
+                if app.compare.is_some() {
+                    continue;
+                }
                 handle_mouse_event(app, mouse);
                 continue;
             }
@@ -1057,6 +1062,10 @@ fn run<B: ratatui::backend::Backend>(
         }
         if app.command_palette.is_some() {
             handle_palette_key(app, key);
+            continue;
+        }
+        if app.compare.is_some() {
+            handle_compare_key(app, key);
             continue;
         }
         if app.help_open {
@@ -1104,9 +1113,6 @@ struct PickerRenderData {
     preview: Vec<preview::PreviewHit>,
     /// Whether the right preview pane should be rendered (layout-level toggle).
     show_preview: bool,
-    /// Bookmark panel: right pane shows Fields detail for this row (`None` = stale).
-    /// When set, overrides [`Self::preview`] hits rendering.
-    detail_row: Option<Option<crate::model::EntryRow>>,
     /// Preset panel: chip-strip Preview lines (overrides hits when set).
     preset_preview: Option<Vec<ratatui::text::Line<'static>>>,
     /// Search-line leading nerdfont; `None` derives from [`PickerMode`].
@@ -1134,7 +1140,6 @@ fn picker_render_data(
                 PickerKind::Unified => "Manage",
                 PickerKind::Filter => "Filter",
                 PickerKind::Highlight => "Highlight",
-                PickerKind::Bookmark => "Bookmark",
                 PickerKind::Exclude => "Exclude",
                 PickerKind::Preset => "Preset",
                 PickerKind::MsgChip { .. } => "Message",
@@ -1187,7 +1192,6 @@ fn picker_render_data(
     let mut checked = Vec::new();
     let mut actions = Vec::new();
     let mut preview_lines = Vec::new();
-    let mut detail_row: Option<Option<crate::model::EntryRow>> = None;
     let mut empty_msg = "no items".to_string();
     let mut preset_preview: Option<Vec<ratatui::text::Line<'static>>> = None;
 
@@ -1206,27 +1210,6 @@ fn picker_render_data(
                 actions = vec![crate::ui::ActionKind::None; labels.len()];
                 empty_msg = "no match".to_string();
                 show_preview = false;
-            }
-            PickerKind::Bookmark => {
-                // Bookmark-only panel: no Tab multi-select; Jump icons;
-                // right pane shows Fields detail for the selected bookmark.
-                use crate::bookmark::bookmark_list_label;
-                let vis = bookmark_visible_indices(app);
-                labels = vis
-                    .iter()
-                    .map(|&i| bookmark_list_label(&app.bookmarks.items[i].label).to_string())
-                    .collect();
-                styles = vis.iter().map(|_| theme::bookmark_label_style()).collect();
-                checked = vec![false; vis.len()];
-                actions = vec![crate::ui::ActionKind::Jump; vis.len()];
-                empty_msg = "no bookmarks".to_string();
-                if show_preview {
-                    detail_row = Some(
-                        vis.get(session.selected)
-                            .and_then(|&i| app.row_by_id(app.bookmarks.items[i].row_id)),
-                    );
-                }
-                let _ = selected; // bookmark panel reuses session.selected as-is
             }
             PickerKind::Preset => {
                 let vis = preset_visible_indices(app);
@@ -1395,7 +1378,7 @@ fn picker_render_data(
                 }
                 empty_msg = "Enter to add / submit".to_string();
             }
-            PickerKind::Bookmark | PickerKind::Preset => {}
+            PickerKind::Preset => {}
             PickerKind::MsgChip { .. } => {
                 let visible =
                     PickerSession::filtered_indices(&session.choices, session.draft.as_str());
@@ -1415,7 +1398,6 @@ fn picker_render_data(
     }
 
     let prompt_icon = match &session.kind {
-        PickerKind::Bookmark => Some(theme::GLYPH_BOOKMARK),
         PickerKind::Preset => Some(theme::GLYPH_GROUP_ON),
         _ => None,
     };
@@ -1437,7 +1419,6 @@ fn picker_render_data(
         empty_msg,
         preview: preview_lines,
         show_preview,
-        detail_row,
         preset_preview,
         prompt_icon,
     })
@@ -1502,9 +1483,7 @@ fn unified_visible_ids(app: &App) -> Vec<crate::picker::UnifiedId> {
     // Bookmark / Preset panels key off their own helpers; never enter unified path.
     if matches!(
         session.kind,
-        crate::picker::PickerKind::Bookmark
-            | crate::picker::PickerKind::Preset
-            | crate::picker::PickerKind::Highlight
+        crate::picker::PickerKind::Preset | crate::picker::PickerKind::Highlight
     ) {
         return Vec::new();
     }
@@ -1518,9 +1497,7 @@ fn unified_selected_id(app: &App) -> Option<crate::picker::UnifiedId> {
     let session = app.picker.as_ref()?;
     if matches!(
         session.kind,
-        crate::picker::PickerKind::Bookmark
-            | crate::picker::PickerKind::Preset
-            | crate::picker::PickerKind::Highlight
+        crate::picker::PickerKind::Preset | crate::picker::PickerKind::Highlight
     ) {
         return None;
     }
@@ -1584,37 +1561,6 @@ fn maybe_return_highlight_auto_new(app: &mut App) {
     app.picker.as_mut().unwrap().return_to_manage();
 }
 
-/// Visible indices into `app.bookmarks.items` (newest-first display order)
-/// for the bookmark Manage panel, filtered by the session query (F2).
-fn bookmark_visible_indices(app: &App) -> Vec<usize> {
-    use crate::bookmark::bookmark_list_label;
-    use crate::picker::PickerSession;
-    let session = match app.picker.as_ref() {
-        Some(s) => s,
-        None => return Vec::new(),
-    };
-    let len = app.bookmarks.items.len();
-    // Newest-first display: rev the labels, filter, then map back to real index.
-    // Search uses the same single-line label shown in the candidate list.
-    let labels: Vec<String> = app
-        .bookmarks
-        .items
-        .iter()
-        .rev()
-        .map(|b| bookmark_list_label(&b.label).to_string())
-        .collect();
-    let vis = PickerSession::filtered_indices(&labels, session.query.as_str());
-    vis.iter().map(|&i| len - 1 - i).collect()
-}
-
-/// The real `app.bookmarks.items` index currently selected in the bookmark panel.
-#[allow(dead_code)]
-fn bookmark_selected_index(app: &App) -> Option<usize> {
-    let vis = bookmark_visible_indices(app);
-    let session = app.picker.as_ref()?;
-    vis.get(session.selected).copied()
-}
-
 fn confirm_picker_delete(app: &mut App) {
     use crate::picker::ConfirmKind;
 
@@ -1663,14 +1609,6 @@ fn confirm_picker_delete(app: &mut App) {
             if let Some(session) = app.picker.as_mut() {
                 session.cancel_confirm();
                 session.checked.clear();
-                session.selected = session.selected.min(count.saturating_sub(1));
-            }
-        }
-        ConfirmKind::DeleteBookmark { index } => {
-            app.delete_bookmark_at_index(index);
-            let count = bookmark_visible_indices(app).len();
-            if let Some(session) = app.picker.as_mut() {
-                session.cancel_confirm();
                 session.selected = session.selected.min(count.saturating_sub(1));
             }
         }
@@ -1983,56 +1921,6 @@ fn handle_picker_key(app: &mut App, key: event::KeyEvent) {
                     }
                 }
             },
-            PickerKind::Bookmark => {
-                // Bookmark panel (F2): Tab no-op, Ctrl-X flash, Delete/Ctrl-D delete,
-                // Enter jump-to-row + close + focus LogList.
-                let vis = bookmark_visible_indices(app);
-                let is_delete = matches!(key.code, KeyCode::Delete)
-                    || (matches!(key.code, KeyCode::Char('d')) && ctrl);
-                match key.code {
-                    KeyCode::Up => {
-                        app.picker.as_mut().unwrap().selected =
-                            app.picker.as_ref().unwrap().selected.saturating_sub(1);
-                    }
-                    KeyCode::Down => {
-                        let session = app.picker.as_mut().unwrap();
-                        session.selected = (session.selected + 1).min(vis.len().saturating_sub(1));
-                    }
-                    KeyCode::Tab => { /* no-op: bookmark panel has no multi-select */ }
-                    KeyCode::Char('x') if ctrl => {
-                        app.set_flash("BOOKMARKS NOT EDITABLE");
-                    }
-                    _ if is_delete => {
-                        if let Some(&idx) = vis.get(app.picker.as_ref().unwrap().selected) {
-                            app.picker.as_mut().unwrap().confirm =
-                                Some(crate::picker::ConfirmKind::DeleteBookmark { index: idx });
-                        }
-                    }
-                    KeyCode::Enter => {
-                        if let Some(&idx) = vis.get(app.picker.as_ref().unwrap().selected) {
-                            let row_id = app.bookmarks.items[idx].row_id;
-                            match app.jump_to_bookmark(row_id) {
-                                crate::bookmark::JumpResult::Ok => {
-                                    app.close_picker();
-                                }
-                                crate::bookmark::JumpResult::Evicted => {
-                                    app.set_flash("BOOKMARK EVICTED");
-                                }
-                                crate::bookmark::JumpResult::Filtered => {
-                                    app.set_flash("BOOKMARK NOT VISIBLE");
-                                }
-                            }
-                        }
-                    }
-                    code => {
-                        let session = app.picker.as_mut().unwrap();
-                        if apply_text_field_key(&mut session.query, code, ctrl) {
-                            session.selected = 0;
-                        }
-                    }
-                }
-                return;
-            }
             PickerKind::Preset => {
                 let vis = preset_visible_indices(app);
                 let is_delete = matches!(key.code, KeyCode::Delete)
@@ -2383,7 +2271,7 @@ fn handle_picker_key(app: &mut App, key: event::KeyEvent) {
             }
         },
         PickerKind::Unified | PickerKind::ActionList { .. } => {}
-        PickerKind::Bookmark | PickerKind::Preset => {}
+        PickerKind::Preset => {}
     }
 }
 
@@ -2770,6 +2658,62 @@ fn handle_leader_key(app: &mut App, code: KeyCode) -> bool {
         return true;
     }
     false
+}
+
+/// Bookmark compare tray keys. Esc / Ctrl+C close without resuming follow.
+/// Pending `d`/`y` stay on the panel; Esc with pending cancels the pending only.
+fn handle_compare_key(app: &mut App, key: event::KeyEvent) {
+    let ctrl = key.modifiers.contains(event::KeyModifiers::CONTROL);
+    if key.code == KeyCode::Char('c') && ctrl {
+        app.close_compare_panel();
+        return;
+    }
+    let pending_d = app.compare.as_ref().is_some_and(|p| p.pending_d);
+    let pending_y = app.compare.as_ref().is_some_and(|p| p.pending_y);
+    if key.code == KeyCode::Esc {
+        if pending_d || pending_y {
+            if let Some(panel) = app.compare.as_mut() {
+                panel.clear_pending();
+            }
+        } else {
+            app.close_compare_panel();
+        }
+        return;
+    }
+    if pending_y {
+        if matches!(key.code, KeyCode::Char('y')) {
+            app.compare_yank_selected();
+        } else if let Some(panel) = app.compare.as_mut() {
+            panel.clear_pending();
+        }
+        return;
+    }
+    if pending_d {
+        if matches!(key.code, KeyCode::Char('d')) {
+            app.compare_delete_selected();
+        } else if let Some(panel) = app.compare.as_mut() {
+            panel.clear_pending();
+        }
+        return;
+    }
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => app.compare_move(1),
+        KeyCode::Char('k') | KeyCode::Up => app.compare_move(-1),
+        KeyCode::Char('g') => app.compare_goto_first(),
+        KeyCode::Char('G') => app.compare_goto_last(),
+        KeyCode::Char('y') => {
+            if let Some(panel) = app.compare.as_mut() {
+                panel.pending_y = true;
+            }
+        }
+        KeyCode::Char('d') => {
+            if let Some(panel) = app.compare.as_mut() {
+                panel.pending_d = true;
+            }
+        }
+        KeyCode::Enter => app.compare_jump_selected(),
+        _ => {}
+    }
 }
 
 /// Read-only Help panel keys. Esc / `?` / Ctrl+C close without resuming follow
@@ -4317,9 +4261,9 @@ mod dispatch_tests {
         assert!(app.pending_m);
         handle_normal_key(&mut app, &mut input, KeyCode::Char('m'));
         assert!(!app.pending_m);
-        let bookmark = app.picker.as_ref().expect("mm opens bookmark Manage");
-        assert_eq!(bookmark.kind, PickerKind::Bookmark);
-        assert_eq!(bookmark.mode, PickerMode::Manage);
+        assert!(app.picker.is_none(), "mm must not open the Bookmark picker");
+        assert!(app.compare.is_none());
+        assert_eq!(app.status_msg.as_deref(), Some("NO BOOKMARKS"));
     }
 
     #[test]
@@ -4376,7 +4320,6 @@ mod dispatch_tests {
             PickerKind::Filter,
             PickerKind::Highlight,
             PickerKind::Exclude,
-            PickerKind::Bookmark,
         ] {
             let mut app = App::new(100);
             app.following = false;
@@ -7058,7 +7001,7 @@ mod dispatch_tests {
     }
 
     #[test]
-    fn test_ma_md_bookmark_and_leader_opens_picker() {
+    fn test_ma_toggles_and_mm_opens_compare_not_picker() {
         let mut app = App::new(100);
         let mut input = input::InputBox::default();
         drain_lines(
@@ -7077,24 +7020,20 @@ mod dispatch_tests {
         assert_eq!(app.status_msg.as_deref(), Some("BOOKMARKED"));
         handle_normal_key(&mut app, &mut input, KeyCode::Char('m'));
         handle_normal_key(&mut app, &mut input, KeyCode::Char('a'));
-        assert_eq!(app.bookmarks.len(), 1);
-        assert_eq!(app.status_msg.as_deref(), Some("EXISTS"));
+        assert!(app.bookmarks.is_empty());
+        assert_eq!(app.status_msg.as_deref(), Some("REMOVED"));
+        handle_normal_key(&mut app, &mut input, KeyCode::Char('m'));
+        handle_normal_key(&mut app, &mut input, KeyCode::Char('a'));
         app.cursor = 1;
         handle_normal_key(&mut app, &mut input, KeyCode::Char('m'));
         handle_normal_key(&mut app, &mut input, KeyCode::Char('m'));
-        assert!(matches!(
-            app.picker.as_ref().map(|picker| &picker.kind),
-            Some(crate::picker::PickerKind::Bookmark)
-        ));
-        assert_eq!(
-            app.picker.as_ref().map(|picker| &picker.mode),
-            Some(&crate::picker::PickerMode::Manage)
-        );
-        handle_picker_key(
+        assert!(app.picker.is_none());
+        assert!(app.compare.is_some());
+        handle_compare_key(
             &mut app,
             event::KeyEvent::new(KeyCode::Esc, event::KeyModifiers::NONE),
         );
-        assert!(app.picker.is_none());
+        assert!(app.compare.is_none());
         assert!(!app.following);
         app.cursor = 0;
         handle_normal_key(&mut app, &mut input, KeyCode::Char('m'));
@@ -7104,9 +7043,7 @@ mod dispatch_tests {
     }
 
     #[test]
-    fn bookmark_panel_enter_jumps_to_row_and_closes() {
-        // mm opens the bookmark-only Manage panel (F2); Enter jumps to the
-        // selected bookmark's row, closes the panel, and focuses LogList.
+    fn compare_panel_enter_jumps_to_row_and_closes() {
         let mut app = App::new(100);
         let mut input = input::InputBox::default();
         drain_lines(
@@ -7119,45 +7056,48 @@ mod dispatch_tests {
         app.following = false;
         app.cursor = 0;
         app.bookmark_add_current();
-        // Move cursor off the bookmark, then open the panel and jump back.
         app.cursor = 1;
         handle_normal_key(&mut app, &mut input, KeyCode::Char('m'));
         handle_normal_key(&mut app, &mut input, KeyCode::Char('m'));
-        assert_eq!(
-            app.picker.as_ref().unwrap().mode,
-            crate::picker::PickerMode::Manage
-        );
-        handle_picker_key(
+        assert!(app.compare.is_some());
+        handle_compare_key(
             &mut app,
             event::KeyEvent::new(KeyCode::Enter, event::KeyModifiers::NONE),
         );
-        assert!(app.picker.is_none(), "Enter closes the bookmark panel");
+        assert!(app.compare.is_none(), "Enter closes the compare panel");
         assert_eq!(app.focus, app::Focus::LogList);
-        // Jumped back to the bookmarked row (visible index 0).
         assert_eq!(app.cursor, 0);
     }
 
     #[test]
-    fn bookmark_panel_tab_is_noop() {
-        // The bookmark panel disables Tab multi-select entirely (F2).
+    fn compare_panel_swallows_slash_wrap_and_fast_scroll() {
         let mut app = App::new(100);
         let mut input = input::InputBox::default();
         drain_lines(&mut app, &["04-02 10:00:00.000  1  1 I Tag     : x"]);
         app.bookmark_add_current();
         handle_normal_key(&mut app, &mut input, KeyCode::Char('m'));
         handle_normal_key(&mut app, &mut input, KeyCode::Char('m'));
-        let before = app.picker.as_ref().unwrap().checked.len();
-        handle_picker_key(
+        assert!(app.compare.is_some());
+        let collapsed = app.collapsed_view;
+        handle_compare_key(
             &mut app,
-            event::KeyEvent::new(KeyCode::Tab, event::KeyModifiers::NONE),
+            event::KeyEvent::new(KeyCode::Char('/'), event::KeyModifiers::NONE),
         );
-        // Tab neither toggles a check nor errors.
-        assert_eq!(app.picker.as_ref().unwrap().checked.len(), before);
+        handle_compare_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Char('w'), event::KeyModifiers::NONE),
+        );
+        handle_compare_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Char('J'), event::KeyModifiers::NONE),
+        );
+        assert!(app.compare.is_some());
+        assert!(app.picker.is_none());
+        assert_eq!(app.collapsed_view, collapsed);
     }
 
     #[test]
-    fn bookmark_panel_delete_confirms_and_deletes() {
-        // Delete / Ctrl-D arms a DeleteBookmark confirm; confirming removes it.
+    fn compare_panel_dd_deletes_without_confirm() {
         let mut app = App::new(100);
         let mut input = input::InputBox::default();
         drain_lines(&mut app, &["04-02 10:00:00.000  1  1 I Tag     : x"]);
@@ -7165,37 +7105,75 @@ mod dispatch_tests {
         assert_eq!(app.bookmarks.len(), 1);
         handle_normal_key(&mut app, &mut input, KeyCode::Char('m'));
         handle_normal_key(&mut app, &mut input, KeyCode::Char('m'));
-        handle_picker_key(
+        handle_compare_key(
             &mut app,
-            event::KeyEvent::new(KeyCode::Delete, event::KeyModifiers::NONE),
+            event::KeyEvent::new(KeyCode::Char('d'), event::KeyModifiers::NONE),
         );
-        assert!(app.picker.as_ref().unwrap().confirm.is_some());
-        // Confirm with Enter.
-        handle_picker_key(
+        assert!(app.compare.as_ref().unwrap().pending_d);
+        handle_compare_key(
             &mut app,
-            event::KeyEvent::new(KeyCode::Enter, event::KeyModifiers::NONE),
+            event::KeyEvent::new(KeyCode::Char('d'), event::KeyModifiers::NONE),
         );
-        assert!(app.bookmarks.is_empty(), "bookmark deleted on confirm");
+        assert!(app.bookmarks.is_empty(), "dd deletes without confirm");
         assert!(app.bookmark_row_ids.is_empty(), "row-id cache cleared");
+        assert!(app.compare.is_none(), "last dd closes the panel");
     }
 
     #[test]
-    fn bookmark_panel_ctrl_x_stays_manage() {
-        // The bookmark panel does not support edit (F2); Ctrl-X flashes and stays.
+    fn compare_panel_yy_yanks_snapshot_raw() {
+        let mut app = App::new(100);
+        let mut input = input::InputBox::default();
+        drain_lines(&mut app, &["04-02 10:00:00.000  1  1 I Tag     : yank-me"]);
+        app.bookmark_add_current();
+        handle_normal_key(&mut app, &mut input, KeyCode::Char('m'));
+        handle_normal_key(&mut app, &mut input, KeyCode::Char('m'));
+        handle_compare_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Char('y'), event::KeyModifiers::NONE),
+        );
+        handle_compare_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Char('y'), event::KeyModifiers::NONE),
+        );
+        let yanked = app.last_yanked.as_deref().unwrap_or("");
+        assert!(yanked.contains("yank-me"), "{yanked}");
+    }
+
+    #[test]
+    fn compare_panel_ctrl_c_closes_without_resume() {
         let mut app = App::new(100);
         let mut input = input::InputBox::default();
         drain_lines(&mut app, &["04-02 10:00:00.000  1  1 I Tag     : x"]);
         app.bookmark_add_current();
+        app.following = false;
         handle_normal_key(&mut app, &mut input, KeyCode::Char('m'));
         handle_normal_key(&mut app, &mut input, KeyCode::Char('m'));
-        let mode_before = app.picker.as_ref().unwrap().mode.clone();
-        handle_picker_key(
+        handle_compare_key(
             &mut app,
-            event::KeyEvent::new(KeyCode::Char('x'), event::KeyModifiers::CONTROL),
+            event::KeyEvent::new(KeyCode::Char('c'), event::KeyModifiers::CONTROL),
         );
-        // Still Manage (no Edit transition).
-        assert_eq!(app.picker.as_ref().unwrap().mode, mode_before);
-        assert_eq!(app.status_msg.as_deref(), Some("BOOKMARKS NOT EDITABLE"));
+        assert!(app.compare.is_none());
+        assert!(!app.following);
+    }
+
+    #[test]
+    fn visual_ma_does_not_bulk_pin() {
+        let mut app = App::new(100);
+        drain_lines(
+            &mut app,
+            &[
+                "04-02 10:00:00.000  1  1 I TagA    : first",
+                "04-02 10:00:01.000  1  1 I TagB    : second",
+                "04-02 10:00:02.000  1  1 I TagC    : third",
+            ],
+        );
+        app.following = false;
+        app.cursor = 0;
+        app.enter_visual_line();
+        app.cursor = 2;
+        app.bookmark_add_current();
+        assert_eq!(app.bookmarks.len(), 1);
+        assert_eq!(app.bookmarks.items[0].row_id(), app.view_source()[2].row_id);
     }
 
     #[test]
@@ -7238,58 +7216,6 @@ mod dispatch_tests {
             app.bookmarks.len(),
             1,
             "bookmark still exists outside panel"
-        );
-    }
-
-    #[test]
-    fn bookmark_panel_render_data_has_jump_actions_and_detail_preview() {
-        // Bookmark panel: Jump icons + Fields detail preview for the selected row.
-        let mut app = App::new(100);
-        let mut input = input::InputBox::default();
-        drain_lines(
-            &mut app,
-            &["04-02 10:00:00.000  1  1 I TagA    : hello detail"],
-        );
-        app.bookmark_add_current();
-        handle_normal_key(&mut app, &mut input, KeyCode::Char('m'));
-        handle_normal_key(&mut app, &mut input, KeyCode::Char('m'));
-        let data = picker_render_data(&app, 10, 80).unwrap();
-        assert!(
-            data.actions
-                .iter()
-                .all(|a| matches!(a, crate::ui::ActionKind::Jump)),
-            "all bookmark rows get a Jump action"
-        );
-        assert!(data.show_preview, "bookmark panel shows preview by default");
-        let row = data
-            .detail_row
-            .clone()
-            .flatten()
-            .expect("alive bookmark yields detail row");
-        assert_eq!(row.tag, "TagA");
-        assert!(row.msg.contains("hello detail"));
-        assert_eq!(data.empty_msg, "no bookmarks");
-    }
-
-    #[test]
-    fn bookmark_panel_detail_preview_stale_row() {
-        let mut app = App::new(100);
-        let mut input = input::InputBox::default();
-        drain_lines(&mut app, &["04-02 10:00:00.000  1  1 I Tag     : x"]);
-        app.bookmarks
-            .try_add(crate::bookmark::Bookmark {
-                row_id: 999_999,
-                label: "stale label".into(),
-            })
-            .unwrap();
-        app.bookmark_row_ids.insert(999_999);
-        handle_normal_key(&mut app, &mut input, KeyCode::Char('m'));
-        handle_normal_key(&mut app, &mut input, KeyCode::Char('m'));
-        let data = picker_render_data(&app, 10, 80).unwrap();
-        assert!(data.show_preview);
-        assert!(
-            matches!(data.detail_row, Some(None)),
-            "missing bookmark row yields empty detail"
         );
     }
 

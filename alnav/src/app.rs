@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::bookmark::{bookmark_label, AddError, Bookmark, BookmarkList, JumpResult};
+use crate::bookmark::{AddError, Bookmark, BookmarkList, ComparePanel, JumpResult};
 use crate::filter_model::{ExcludeEntry, Group, GroupList, TimeBound};
 use crate::help::{HelpPage, HelpSearch, HelpView};
 use crate::highlight_model::{HighlightBox, HighlightGroup, HighlightGroupList};
@@ -326,10 +326,12 @@ pub struct App {
     pub open_file_panel: Option<crate::source_panel::OpenFilePanel>,
     /// Centered HDC/ADB panel (`C-g`).
     pub stream_source_panel: Option<crate::source_panel::StreamSourcePanel>,
-    /// Open fzf-style picker session (Unified Manage / Filter / Highlight / Bookmark / Exclude).
+    /// Open fzf-style picker session (Unified Manage / Filter / Highlight / Exclude).
     pub picker: Option<crate::picker::PickerSession>,
     /// VS Code-style command palette (`C-p`). Independent of [`Self::picker`].
     pub command_palette: Option<crate::command_palette::CommandPalette>,
+    /// Bookmark compare tray modal (`mm`). Not a [`crate::picker::PickerSession`].
+    pub compare: Option<ComparePanel>,
     /// Session bookmarks (M2).
     pub bookmarks: BookmarkList,
     /// O(1) cache of bookmarked `row_id`s for LogList bg lookup (F1).
@@ -460,6 +462,7 @@ impl App {
             stream_source_panel: None,
             picker: None,
             command_palette: None,
+            compare: None,
             bookmarks: BookmarkList::default(),
             bookmark_row_ids: HashSet::new(),
             next_row_id: 1,
@@ -631,6 +634,7 @@ impl App {
             || self.detail_open()
             || self.highlight_box.editing
             || self.help_open
+            || self.compare.is_some()
             || self.summary_open()
             || self.dashboard.is_some()
             || self.open_file_panel.is_some()
@@ -843,6 +847,7 @@ impl App {
         self.view_focus = ViewFocus::default();
         self.time_panel = None;
         self.command_palette = None;
+        self.compare = None;
         self.detail = DetailView::Closed;
         self.help_open = false;
         self.help_view = HelpView::default();
@@ -2205,7 +2210,7 @@ impl App {
         self.pending_leader = false;
     }
 
-    /// `ma`: bookmark current LogList row.
+    /// `ma`: toggle pin on the current LogList row (snapshot copy).
     pub fn bookmark_add_current(&mut self) {
         self.pending_m = false;
         self.pending_leader = false;
@@ -2214,10 +2219,18 @@ impl App {
             return;
         };
         let row_id = row.row_id;
-        let bm = Bookmark {
-            row_id,
-            label: bookmark_label(&row.timestamp, row.level.as_char(), &row.tag, &row.msg),
-        };
+        if self.bookmarks.contains_id(row_id) {
+            self.bookmarks.remove_id(row_id);
+            self.bookmark_row_ids.remove(&row_id);
+            self.set_flash("REMOVED");
+            if self.bookmarks.is_empty() {
+                self.close_compare_panel();
+            } else if let Some(panel) = self.compare.as_mut() {
+                panel.clamp_cursor(self.bookmarks.len());
+            }
+            return;
+        }
+        let bm = Bookmark::from_row((*row).clone());
         match self.bookmarks.try_add(bm) {
             Ok(()) => {
                 self.bookmark_row_ids.insert(row_id);
@@ -2225,6 +2238,93 @@ impl App {
             }
             Err(AddError::Duplicate) => self.set_flash("EXISTS"),
             Err(AddError::Full) => self.set_flash("BOOKMARKS FULL"),
+        }
+    }
+
+    /// `mm`: open the compare panel, or flash `NO BOOKMARKS` when the tray is empty.
+    pub fn open_compare_panel(&mut self) {
+        self.pending_m = false;
+        self.pending_leader = false;
+        if self.bookmarks.is_empty() {
+            self.set_flash("NO BOOKMARKS");
+            return;
+        }
+        self.clear_visual();
+        self.following = false;
+        self.compare = Some(ComparePanel::new());
+    }
+
+    /// Close the compare panel without resuming follow. Clears panel pendings.
+    pub fn close_compare_panel(&mut self) {
+        self.compare = None;
+    }
+
+    fn compare_selected_storage_index(&self) -> Option<usize> {
+        let panel = self.compare.as_ref()?;
+        let sorted = self.bookmarks.sorted_indices();
+        sorted.get(panel.cursor).copied()
+    }
+
+    pub fn compare_move(&mut self, delta: isize) {
+        let len = self.bookmarks.len();
+        if let Some(panel) = self.compare.as_mut() {
+            panel.move_by(delta, len);
+        }
+    }
+
+    pub fn compare_goto_first(&mut self) {
+        if let Some(panel) = self.compare.as_mut() {
+            panel.cursor = 0;
+            panel.clear_pending();
+        }
+    }
+
+    pub fn compare_goto_last(&mut self) {
+        let last = self.bookmarks.len().saturating_sub(1);
+        if let Some(panel) = self.compare.as_mut() {
+            panel.cursor = last;
+            panel.clear_pending();
+        }
+    }
+
+    pub fn compare_yank_selected(&mut self) {
+        let Some(idx) = self.compare_selected_storage_index() else {
+            return;
+        };
+        let raw = self.bookmarks.items[idx].row.raw.clone();
+        if let Some(panel) = self.compare.as_mut() {
+            panel.clear_pending();
+        }
+        self.apply_yank(raw);
+    }
+
+    pub fn compare_delete_selected(&mut self) {
+        let Some(idx) = self.compare_selected_storage_index() else {
+            return;
+        };
+        self.delete_bookmark_at_index(idx);
+        if self.bookmarks.is_empty() {
+            self.close_compare_panel();
+            return;
+        }
+        if let Some(panel) = self.compare.as_mut() {
+            panel.clear_pending();
+            panel.clamp_cursor(self.bookmarks.len());
+        }
+    }
+
+    pub fn compare_jump_selected(&mut self) {
+        let Some(idx) = self.compare_selected_storage_index() else {
+            return;
+        };
+        let row_id = self.bookmarks.items[idx].row_id();
+        match self.jump_to_bookmark(row_id) {
+            JumpResult::Ok => {
+                self.close_compare_panel();
+                self.focus = Focus::LogList;
+            }
+            JumpResult::Filtered => self.set_flash("BOOKMARK NOT VISIBLE"),
+            JumpResult::Evicted => self.set_flash("BOOKMARK EVICTED"),
         }
     }
 
@@ -3261,19 +3361,16 @@ impl App {
         true
     }
 
-    pub fn update_bookmark_label(&mut self, row_id: u64, label: String) -> bool {
-        self.bookmarks.update_label(row_id, label)
-    }
-
     pub fn clear_bookmarks(&mut self) {
         self.bookmark_row_ids.clear();
         self.bookmarks.clear();
+        self.close_compare_panel();
     }
 
     /// Delete a bookmark by index into `bookmarks.items`; keeps
     /// `bookmark_row_ids` in sync (F1). Returns false if index out of range.
     pub fn delete_bookmark_at_index(&mut self, index: usize) -> bool {
-        let row_id = self.bookmarks.items.get(index).map(|b| b.row_id);
+        let row_id = self.bookmarks.items.get(index).map(|b| b.row_id());
         if !self.bookmarks.delete_at(index) {
             return false;
         }
@@ -3903,12 +4000,9 @@ mod tests {
         assert!(!app.visible.is_empty());
 
         let row_id = app.matched()[0].row_id;
-        app.bookmarks
-            .try_add(Bookmark {
-                row_id,
-                label: "bm".into(),
-            })
-            .unwrap();
+        let mut snap = app.matched()[0].clone();
+        snap.row_id = row_id;
+        app.bookmarks.try_add(Bookmark::from_row(snap)).unwrap();
         app.bookmark_row_ids.insert(row_id);
 
         app.following = false;
@@ -4795,28 +4889,174 @@ mod flash_tests {
     #[test]
     fn clear_bookmarks() {
         let mut app = App::new(100);
-        app.bookmarks
-            .try_add(Bookmark {
-                row_id: 1,
-                label: "test".into(),
-            })
-            .unwrap();
+        let mut row = crate::model::EntryRow::from_line_or_raw("04-02 10:00:00.000  1  1 I T : x");
+        row.row_id = 1;
+        app.bookmarks.try_add(Bookmark::from_row(row)).unwrap();
         app.clear_bookmarks();
         assert!(app.bookmarks.is_empty());
+        assert!(app.compare.is_none());
     }
 
     #[test]
-    fn update_bookmark_label_by_row_id() {
+    fn bookmark_add_toggles_and_cap_rejects() {
         let mut app = App::new(100);
-        app.bookmarks
-            .try_add(Bookmark {
-                row_id: 42,
-                label: "old".into(),
-            })
+        let (tx, rx) = std::sync::mpsc::channel();
+        for i in 0..18u32 {
+            tx.send(
+                crate::model::EntryRow::from_line(&format!(
+                    "04-02 10:00:{i:02}.000  1  1 I Tag{i}   : msg{i}"
+                ))
+                .unwrap(),
+            )
             .unwrap();
-        assert!(app.update_bookmark_label(42, "new".into()));
-        assert_eq!(app.bookmarks.items[0].label, "new");
-        assert!(!app.update_bookmark_label(99, "x".into()));
+        }
+        drop(tx);
+        app.drain(&rx);
+        app.following = false;
+        app.cursor = 0;
+        app.bookmark_add_current();
+        assert_eq!(app.bookmarks.len(), 1);
+        assert_eq!(app.status_msg.as_deref(), Some("BOOKMARKED"));
+        assert!(app.bookmark_row_ids.contains(&app.view_source()[0].row_id));
+        app.bookmark_add_current();
+        assert!(app.bookmarks.is_empty());
+        assert_eq!(app.status_msg.as_deref(), Some("REMOVED"));
+        app.bookmark_add_current();
+        for i in 1..16 {
+            app.cursor = i;
+            app.bookmark_add_current();
+            assert_eq!(app.status_msg.as_deref(), Some("BOOKMARKED"), "pin {i}");
+        }
+        assert_eq!(app.bookmarks.len(), 16);
+        app.cursor = 16;
+        app.bookmark_add_current();
+        assert_eq!(app.bookmarks.len(), 16);
+        assert_eq!(app.status_msg.as_deref(), Some("BOOKMARKS FULL"));
+    }
+
+    #[test]
+    fn open_compare_panel_empty_vs_pins() {
+        let mut app = App::new(100);
+        app.following = true;
+        app.open_compare_panel();
+        assert!(app.compare.is_none());
+        assert_eq!(app.status_msg.as_deref(), Some("NO BOOKMARKS"));
+        assert!(app.following);
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(
+            crate::model::EntryRow::from_line("04-02 10:00:00.000  1  1 I Tag     : x").unwrap(),
+        )
+        .unwrap();
+        drop(tx);
+        app.drain(&rx);
+        app.cursor = 0;
+        app.bookmark_add_current();
+        app.following = true;
+        app.open_compare_panel();
+        assert!(app.compare.is_some());
+        assert!(!app.following);
+        app.close_compare_panel();
+        assert!(app.compare.is_none());
+        assert!(!app.following);
+    }
+
+    #[test]
+    fn compare_enter_jump_and_dd_last_closes() {
+        let mut app = App::new(100);
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(
+            crate::model::EntryRow::from_line("04-02 10:00:00.000  1  1 I TagA    : first")
+                .unwrap(),
+        )
+        .unwrap();
+        tx.send(
+            crate::model::EntryRow::from_line("04-02 10:00:01.000  1  1 I TagB    : second")
+                .unwrap(),
+        )
+        .unwrap();
+        drop(tx);
+        app.drain(&rx);
+        app.following = false;
+        app.cursor = 0;
+        app.bookmark_add_current();
+        app.cursor = 1;
+        app.open_compare_panel();
+        app.compare_jump_selected();
+        assert!(app.compare.is_none());
+        assert_eq!(app.focus, Focus::LogList);
+        assert_eq!(app.cursor, 0);
+
+        app.open_compare_panel();
+        app.compare_delete_selected();
+        assert!(app.compare.is_none());
+        assert!(app.bookmarks.is_empty());
+        assert!(app.bookmark_row_ids.is_empty());
+    }
+
+    #[test]
+    fn compare_yank_sets_last_yanked_to_raw() {
+        let mut app = App::new(100);
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(
+            crate::model::EntryRow::from_line("04-02 10:00:00.000  1  1 I Tag     : hello yank")
+                .unwrap(),
+        )
+        .unwrap();
+        drop(tx);
+        app.drain(&rx);
+        app.cursor = 0;
+        app.bookmark_add_current();
+        app.open_compare_panel();
+        app.compare_yank_selected();
+        let yanked = app.last_yanked.as_deref().unwrap_or("");
+        assert!(yanked.contains("hello yank"), "{yanked}");
+    }
+
+    #[test]
+    fn compare_enter_filtered_and_evicted_stay_open() {
+        use crate::fuzzy::SameFieldOp;
+        use crate::input::{Chip, ChipField};
+
+        let mut app = App::new(100);
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(
+            crate::model::EntryRow::from_line("04-02 10:00:00.000  1  1 I Keep    : a").unwrap(),
+        )
+        .unwrap();
+        tx.send(
+            crate::model::EntryRow::from_line("04-02 10:00:01.000  1  1 I Drop    : b").unwrap(),
+        )
+        .unwrap();
+        drop(tx);
+        app.drain(&rx);
+        app.cursor = 1;
+        app.bookmark_add_current();
+        app.groups.groups.push(crate::filter_model::Group {
+            label: "keep".into(),
+            chips: vec![Chip {
+                field: ChipField::Tag,
+                value: "Keep".into(),
+            }],
+            enabled: true,
+            same_field_op: SameFieldOp::And,
+        });
+        app.rebuild_visible();
+        app.open_compare_panel();
+        app.compare_jump_selected();
+        assert!(app.compare.is_some());
+        assert_eq!(app.status_msg.as_deref(), Some("BOOKMARK NOT VISIBLE"));
+
+        let mut gone = crate::model::EntryRow::from_line_or_raw("gone");
+        gone.row_id = 999_999;
+        app.bookmarks.try_add(Bookmark::from_row(gone)).unwrap();
+        app.bookmark_row_ids.insert(999_999);
+        if let Some(panel) = app.compare.as_mut() {
+            panel.cursor = 1;
+        }
+        app.compare_jump_selected();
+        assert!(app.compare.is_some());
+        assert_eq!(app.status_msg.as_deref(), Some("BOOKMARK EVICTED"));
     }
 
     #[test]

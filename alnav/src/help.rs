@@ -67,6 +67,7 @@ pub enum ContextKind {
     LogList,
     LogListLive,
     CommandPalette,
+    Compare,
 }
 
 impl ContextKind {
@@ -91,6 +92,7 @@ impl ContextKind {
             Self::LogList => "Log list",
             Self::LogListLive => "Log list (live)",
             Self::CommandPalette => "Command palette",
+            Self::Compare => "Compare",
         }
     }
 }
@@ -303,6 +305,9 @@ pub fn context_kind(app: &App) -> ContextKind {
     if app.time_panel.is_some() {
         return ContextKind::TimePanel;
     }
+    if app.compare.is_some() {
+        return ContextKind::Compare;
+    }
     if app.command_palette.is_some() {
         return ContextKind::CommandPalette;
     }
@@ -397,7 +402,7 @@ fn l1_loglist(app: &App, live: bool) -> Vec<HintEntry> {
         "exclude",
         "open exclude new",
     );
-    // mm = bookmark prefix + manage
+    // mm = bookmark prefix + compare
     if let (Some(a), Some(b)) = (
         key_of(app, ActionId::LogListBookmark),
         key_of(app, ActionId::BookmarkManage),
@@ -405,7 +410,7 @@ fn l1_loglist(app: &App, live: bool) -> Vec<HintEntry> {
         out.push(HintEntry::new(
             format!("{a}{b}"),
             "marks",
-            "bookmark manage",
+            "open compare panel",
         ));
     }
     push_agg(
@@ -662,7 +667,7 @@ pub fn context_entries(app: &App) -> Vec<HintEntry> {
             let mut out = Vec::new();
             push_short(&mut out, app, ActionId::BookmarkAdd, "add");
             push_short(&mut out, app, ActionId::BookmarkRemove, "delete");
-            push_short(&mut out, app, ActionId::BookmarkManage, "manage");
+            push_short(&mut out, app, ActionId::BookmarkManage, "compare");
             push_short(&mut out, app, ActionId::BookmarkCancel, "cancel");
             out
         }
@@ -775,6 +780,16 @@ pub fn context_entries(app: &App) -> Vec<HintEntry> {
             push_short(&mut out, app, ActionId::PaletteClose, "close");
             out
         }
+        ContextKind::Compare => {
+            let mut out = Vec::new();
+            push_literal(&mut out, "j/k", "pin", "move by pin");
+            push_literal(&mut out, "g/G", "first", "first / last pin");
+            push_literal(&mut out, "yy", "yank", "yank selected snapshot raw");
+            push_literal(&mut out, "dd", "delete", "delete selected pin");
+            push_literal(&mut out, "Enter", "jump", "jump to origin in log");
+            push_literal(&mut out, "Esc", "close", "close compare panel");
+            out
+        }
     }
 }
 
@@ -841,14 +856,14 @@ pub fn page_blurb(page: HelpPage) -> &'static [&'static str] {
         HelpPage::Session => &[
             "Lock PID and lock TID are mutually exclusive and AND after chips.",
             "The global time window is file-only and orthogonal to Filter groups.",
-            "Bookmarks are session-only, anchored by `row_id`, and vanish when the process exits.",
+            "Bookmarks are session-only snapshot pins with a compare panel (`mm`).",
             "Follow and device/file state live in the status bar, not in a chip group.",
         ],
         HelpPage::Picker => &[
             "Space is Leader; Space Space opens unified Manage.",
             "Bare `;` and backtick force New for Filter / Exclude. `/` finds or creates a Highlight.",
             "Unified Manage stays in Manage when nothing matches. Highlight finder auto-opens New.",
-            "Bookmark Manage is `mm`, not this unified picker.",
+            "The compare tray (`mm`) is not this unified picker.",
         ],
         HelpPage::Overlays => &[
             "Fields (`p`) and Pretty (`P`) are a top modal on the current row; Esc closes the overlay only and does not resume following.",
@@ -1116,7 +1131,7 @@ fn page_entries(app: &App, page: HelpPage) -> Vec<HintEntry> {
                 session.push(HintEntry::new(
                     format!("{m}{b}"),
                     "bookmarks",
-                    "open bookmark manage",
+                    "open bookmark compare panel",
                 ));
             }
             if live {
@@ -1508,6 +1523,7 @@ pub fn help_available(app: &App) -> bool {
         || app.detail_open()
         || app.highlight_box.editing
         || app.command_palette.is_some()
+        || app.compare.is_some()
     {
         return false;
     }
@@ -2060,6 +2076,33 @@ move_down = "Down"
             "{labels:?}"
         );
         assert!(!labels.contains(&"help") || labels.len() > 2);
+    }
+
+    #[test]
+    fn compare_panel_blocks_help_and_uses_compare_context() {
+        let mut app = app_with_focus(Focus::LogList);
+        let mut row = crate::model::EntryRow::from_line_or_raw("04-02 10:00:00.000  1  1 I T : x");
+        row.row_id = 1;
+        app.bookmarks
+            .try_add(crate::bookmark::Bookmark::from_row(row))
+            .unwrap();
+        app.bookmark_row_ids.insert(1);
+        app.open_compare_panel();
+        assert!(!help_available(&app));
+        assert_eq!(context_kind(&app), ContextKind::Compare);
+        let labels: Vec<&str> = context_entries(&app).iter().map(|e| e.label).collect();
+        assert!(labels.contains(&"jump"), "{labels:?}");
+        assert!(labels.contains(&"yank"), "{labels:?}");
+        assert!(!labels.iter().any(|l| *l == "manage"), "{labels:?}");
+    }
+
+    #[test]
+    fn pending_m_says_compare_not_manage() {
+        let mut app = app_with_focus(Focus::LogList);
+        app.pending_m = true;
+        let labels: Vec<&str> = context_entries(&app).iter().map(|e| e.label).collect();
+        assert!(labels.contains(&"compare"), "{labels:?}");
+        assert!(!labels.contains(&"manage"), "{labels:?}");
     }
 
     #[test]

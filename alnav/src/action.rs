@@ -217,7 +217,7 @@ pub fn dispatch(app: &mut App, id: ActionId) {
         | StripDCancel | VisualCancel => apply_cancel(app, id),
         BookmarkAdd => app.bookmark_add_current(),
         BookmarkRemove => app.bookmark_remove_current(),
-        BookmarkManage => app.open_picker(PickerKind::Bookmark),
+        BookmarkManage => app.open_compare_panel(),
         LockPid => app.apply_session_lock(LockKind::Pid),
         LockTid => app.apply_session_lock(LockKind::Tid),
         LockViewHighlight => app.toggle_view_focus(ViewFocusKind::Highlight),
@@ -528,7 +528,7 @@ mod tests {
             ),
             (
                 ActionId::BookmarkManage,
-                "Manage Bookmarks",
+                "Open Compare Panel",
                 theme::GLYPH_BOOKMARK,
             ),
             (ActionId::YankCli, "Yank CLI", theme::GLYPH_TITLE_LOG),

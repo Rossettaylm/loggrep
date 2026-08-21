@@ -54,11 +54,10 @@ pub enum MsgChipPurpose {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PickerKind {
-    /// Aggregated Manage panel (Filter + Highlight + Exclude + Bookmark).
+    /// Aggregated Manage panel (Filter + Highlight + Exclude).
     Unified,
     Filter,
     Highlight,
-    Bookmark,
     Exclude,
     /// Named filter presets (Manage-only: search / apply / rename / delete).
     Preset,
@@ -82,8 +81,6 @@ pub enum PickerMode {
 pub enum ConfirmKind {
     /// Delete one or more unified items (single or Tab multi-select).
     DeleteMany { items: Vec<UnifiedId> },
-    /// Delete a single bookmark by index into `bookmarks.items` (F2/F4).
-    DeleteBookmark { index: usize },
     /// Delete a named preset file (`presets/<name>.toml`).
     DeletePreset { name: String },
 }

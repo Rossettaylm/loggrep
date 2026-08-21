@@ -34,8 +34,9 @@ Update this spec when changing:
 | `status_hint_entries(app) -> Vec<HintEntry>` | `help.rs` | Status bar subset: idle LogList/Strip curated 1–2 keys; else full |
 | `keymap.toml` / `KeymapStore` | `keymap.rs` | Startup deep-merge; `--init` serializes defaults including `[help]` search/back |
 | `context_hint_spans(app, max)` | `help.rs` | Consumes `status_hint_entries`; dim key + label; gap `"  "`; no `:`/`\|` |
-| `help_available(app) -> bool` | `help.rs` | Gate for opening Help; **false** when command palette is open |
+| `help_available(app) -> bool` | `help.rs` | Gate for opening Help; **false** when command palette or compare tray is open |
 | `ContextKind::CommandPalette` | `help.rs` | Palette open → status L2 is palette keys (Esc/Enter/Up/Down) |
+| `ContextKind::Compare` | `help.rs` | Compare tray open → status L2 is `j/k` `g/G` `yy` `dd` Enter Esc (not Manage) |
 | `GlobalCommandPalette` | `keymap.rs` | Default `C-p`; listed on Overlays + LogList Active, **not** idle status |
 | `HOME_ACTIVE_LIMIT` / `HelpPage` / `HelpView` / `HelpSearch` | `help.rs` | Home Active ≤4; seven zone pages; `/` search session |
 | `help_body_lines(app)` | `help.rs` | Home: Active + TOC + chrome; Page: title + blurb + keys + chrome |
@@ -72,7 +73,7 @@ Left (never yields) → middle flash pill → pad + right-aligned hints.
 - English only; key dim, label normal weight; entries separated by spaces only.
 - Idle **LogList / LogListLive**: exactly `? help` and `; filter` (from keymap via `status_hint_entries`).
 - Idle **ChipStrip / ExcludeStrip / HighlightStrip**: exactly `? help` and `d del…`.
-- Operator-pending and modal (Picker / Time / Detail / Confirm / Highlight-edit / Input / Leader / **CommandPalette**): full `context_entries`.
+- Operator-pending and modal (Picker / Time / Detail / Confirm / Highlight-edit / Input / Leader / **CommandPalette** / **Compare**): full `context_entries`.
 - Do **not** add idle `: palette` / `C-p palette` — Open Command Palette is Help-catalog only.
 - Help Home Active uses the first **4** of `context_entries`; the full list still feeds status L2 and must not shrink.
 - Hints hide first when budget `< MIN_HELP_WIDTH` (8); flash keeps a ~12-column floor (`FLASH_MIN`) while visible.
@@ -80,7 +81,7 @@ Left (never yields) → middle flash pill → pad + right-aligned hints.
 ### Help panel (`?`)
 
 - **Read-only** — never executes commands / never replaces Picker or the command palette.
-- Open when: focus ∈ {LogList, ChipStrip, ExcludeStrip, HighlightStrip} AND no picker/time/detail/highlight edit/**command palette** AND no `pending_*` / `pending_leader`.
+- Open when: focus ∈ {LogList, ChipStrip, ExcludeStrip, HighlightStrip} AND no picker/time/detail/highlight edit/**command palette**/**compare tray** AND no `pending_*` / `pending_leader`.
 - **Two-level**: Home (Active title + ≤4 `context_entries` + numbered TOC `1`–`7` + chrome footer) and seven zone pages (Filter / Exclude / Highlight / Log / Session / Picker / Overlays). Each page: title + ≤5-line English contract + that zone's key table. No eighth Help-keys page — chrome lives on the Home footer.
 - Opening Help preselects TOC from `Focus` (strips → matching page, LogList → Log).
 - Close any layer: Esc / `?` / Ctrl+C → `close_help()`; does **not** resume following. `h` / Backspace return to Home (restore TOC highlight); on Home they are no-ops. Digits `1`–`7` jump from Home or any page except while the search prompt is active.
@@ -97,6 +98,7 @@ Left (never yields) → middle flash pill → pad + right-aligned hints.
 - L2_TIME: `t` set / `u` clear (open key is `tt`, not `ts`). Catalog session: `f h/e`, `t t/u`.
 - Source switch: `C-f` Open File, `C-g` Open Stream (not `of`/`os`, not `C-S-o`/`C-S-l`). Dashboard bare `o` still opens the file panel.
 - Presets: `C-s` save / `C-o` open (not `Space w` / `Space o`).
+- Bookmarks: `mm` opens the compare tray (`BookmarkManage` copy = compare/open panel, not Manage). `pending_m` L2 is add / delete / compare.
 
 ### Flash language
 
@@ -110,7 +112,7 @@ English. Prefer short uppercase tokens (`EXISTS`, `NO ROW`, `UNKNOWN FIELD`).
 | Condition | Behavior |
 |-----------|----------|
 | `?` while `pending_yank` (etc.) | Help does not open (pending handler consumes key) |
-| `?` while Picker/Time/Detail open | Help does not open |
+| `?` while Picker/Time/Detail/Compare open | Help does not open |
 | Help Esc | Close whole panel; `following` unchanged (`h`/Backspace go Home; search Esc clears search first) |
 | Help `/` while prompt open | Types into the query (does not open Highlight finder) |
 | Narrow terminal | Right hints hide when budget `< MIN_HELP_WIDTH` (8); left icons win |

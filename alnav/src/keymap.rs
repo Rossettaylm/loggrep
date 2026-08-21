@@ -1385,13 +1385,13 @@ impl ActionId {
                 default: Binding::parse_str("m").expect("default binding"),
                 kind: ActionKind::Leaf,
                 capabilities: &[],
-                label: "manage",
-                detail: "open bookmark manage",
+                label: "compare",
+                detail: "open bookmark compare panel",
                 in_palette: false,
                 palette_title: "",
                 palette_icon: "",
             }
-            .with_palette("Manage Bookmarks", theme::GLYPH_BOOKMARK),
+            .with_palette("Open Compare Panel", theme::GLYPH_BOOKMARK),
             Self::BookmarkCancel => ActionMeta {
                 id: Self::BookmarkCancel,
                 context: KeyContext::Bookmark,

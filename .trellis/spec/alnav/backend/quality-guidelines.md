@@ -51,7 +51,7 @@ and diverges from CLI global-AND semantics. See
 
 ### Don't: let modal Ctrl+C fall through as a typed character
 
-When a top modal owns key routing (Time panel, Help, command palette, etc.),
+When a top modal owns key routing (Time panel, Help, command palette, compare tray, etc.),
 Ctrl+C must cancel like Esc at the `KeyEvent` layer — otherwise `Char('c')`
 is inserted into the draft or quits the app while a modal is open.
 
@@ -63,8 +63,8 @@ paragraph table in `ui.rs`. See [status-help.md](./status-help.md).
 
 ### Don't: resume following when closing Help
 
-`close_help()` must not call `resume_following` — same as Detail Esc and
-`close_command_palette()`.
+`close_help()` must not call `resume_following` — same as Detail Esc,
+`close_command_palette()`, and `close_compare_panel()`.
 
 ### Don't: reuse PickerSession for the command palette
 
@@ -72,6 +72,13 @@ The `C-p` palette is `App.command_palette` + `command_palette.rs`. Do not
 route it through `PickerKind` / `UnifiedKind`. Empty query must not list
 commands; `j`/`k` type into the query (Up/Down move). See
 [command-palette.md](./command-palette.md).
+
+### Don't: reuse PickerSession for the bookmark compare tray
+
+`mm` / `BookmarkManage` opens `App.compare` (`ComparePanel`). Do not
+reintroduce `PickerKind::Bookmark`, `ConfirmKind::DeleteBookmark`, or
+newest-first `bookmark_visible_indices`. Do not route pins through
+`UnifiedKind`.
 
 ---
 
@@ -133,8 +140,8 @@ candidate list inside an already-bordered Picker pane.
 ## Testing Requirements
 
 - Every removed field/arm gets its test deleted or rewritten to the new
-  contract (e.g. `mm` New→Manage, `toggle_unified_enabled_bookmark`
-  deleted).
+  contract (e.g. `mm` opens compare not Bookmark picker;
+  `toggle_unified_enabled_bookmark` deleted).
 - New behavioral contract (jump, delete, bg priority) gets a test that
   fails on a plausible regression.
 - `cargo test --workspace` must be green before commit; `cargo fmt -p

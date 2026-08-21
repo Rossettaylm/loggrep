@@ -17,7 +17,7 @@ pipeline, or input dispatch. Cross-module state flows through `App`.
 ```
 alnav/src/
 ├── main.rs         # CLI entry, terminal lifecycle, event loop, key dispatch
-├── app.rs          # App state machine: store/Visible::{All,Subset}/groups/time_bound/bookmarks/picker/focus
+├── app.rs          # App state machine: store/Visible::{All,Subset}/groups/time_bound/bookmarks/compare/picker/focus
 ├── store.rs        # RowStore/FileStore/StreamStore/RowRef (mmap file + stream)
 ├── scan.rs         # File Vis+Inc highlight worker + severe prefetch (async-scans)
 ├── model.rs        # EntryRow: owned line model, from_line()/from_line_or_raw()/as_log_entry()
@@ -35,7 +35,7 @@ alnav/src/
 ├── palette.rs      # Palette, name fold, mix, contrast_fg
 ├── theme_builtins.rs # nine Palette constants
 ├── theme.rs        # UiTokens + style fns (mapped from Palette; CLI logcolor is separate)
-├── bookmark.rs     # Bookmark/BookmarkList/JumpResult/label helpers
+├── bookmark.rs     # Bookmark snapshot + BookmarkList + ComparePanel + JumpResult
 ├── preset.rs       # Named Filter/Exclude/Highlight presets (`presets/*.toml`)
 ├── help.rs         # HintEntry L1/L2; two-level Help (Home+7 pages, `/` search); FAST_SCROLL_STEP
 ├── export.rs       # H10 yc CLI export (filters + lock + time_bound)
@@ -94,10 +94,10 @@ stay two-stage. Retired: `of`/`os`, `LogListOpen` / `pending_open` /
 Manage mode is dispatched **by `session.kind`** in two places:
 
 - `picker_render_data` (`main.rs`): builds the candidate list per kind.
-  `Unified` aggregates Filter+Highlight+Exclude; `Bookmark` builds a
-  bookmark-only list (no `[Bookmark]:` prefix). `Highlight` Manage is
-  also per-kind: pattern-only labels, `ActionKind::Jump`, never
-  `unified_picker_items`. Future per-kind Manage panels branch here.
+  `Unified` aggregates Filter+Highlight+Exclude only (no bookmarks).
+  `Highlight` Manage is also per-kind: pattern-only labels,
+  `ActionKind::Jump`, never `unified_picker_items`. Future per-kind
+  Manage panels branch here.
 - `handle_picker_key` Manage branch (`main.rs`): routes keys per kind.
   `Unified` supports Tab multi-select + Ctrl-X edit; Enter = toggle
   (Highlight rows included — no jump, picker stays open).
@@ -105,11 +105,11 @@ Manage mode is dispatched **by `session.kind`** in two places:
   `activate_highlight_group` + close; Ctrl-X = edit; Delete /
   Ctrl-Backspace = delete confirm; nonempty query + zero hits →
   `enter_new_with_draft` (`auto_from_manage`); last group deleted → New.
-  `Bookmark` disables edit (Tab = no-op, Ctrl-X = flash) and binds
-  Enter = jump, Delete / Ctrl-Backspace = delete-via-`ConfirmKind::DeleteBookmark`.
   `Preset` is Manage-only (no auto-New): Enter = apply, Ctrl-X = rename
   name dialog, Delete = `ConfirmKind::DeletePreset`; save is `C-s`
   outside the picker.
+  Bookmarks are **not** a `PickerKind`. `mm` / `BookmarkManage` opens
+  `App.compare` (`ComparePanel`); do not reintroduce `PickerKind::Bookmark`.
 
 **Convention**: to add a new per-kind Manage panel, add a `PickerKind`
 variant, branch in both `picker_render_data` and `handle_picker_key`, and
@@ -117,21 +117,32 @@ provide a `*_visible_indices`/`*_selected_index` helper pair. Do NOT
 reintroduce a `UnifiedKind` variant for it — `UnifiedKind` is the
 aggregate-panel item taxonomy only.
 
+### Bookmark compare tray (not a picker)
+
+`App.compare: Option<ComparePanel>` is a dedicated modal (same event-loop
+layer as Help). `Bookmark` is an owned `EntryRow` snapshot plus jump
+`row_id`. Display order is `BookmarkList::sorted_indices()` (log time
+then `row_id`; untimed last). Cap is 16. `ma` toggles; `mm` opens the
+panel or flashes `NO BOOKMARKS`. Handle compare keys **before** LogList;
+Esc / Ctrl+C close without `resume_following`. `help_available` is false
+while the panel is open.
+
 ### Bookmark row-id cache
 
 `App.bookmark_row_ids: HashSet<u64>` mirrors `BookmarkList.items` row_ids
 for O(1) LogList bg lookup. It is mutated in lockstep with every
-`BookmarkList` mutation (`bookmark_add_current`, `bookmark_remove_current`,
-`delete_bookmark_at_index`, `clear_bookmarks`). Any new mutation site on
-`BookmarkList` MUST sync this set — `render_log_list` reads it every frame.
+`BookmarkList` mutation (`bookmark_add_current` toggle, `bookmark_remove_current`,
+`compare_delete_selected` → `delete_bookmark_at_index`, `clear_bookmarks`).
+Any new mutation site on `BookmarkList` MUST sync this set —
+`render_log_list` reads it every frame.
 
 ---
 
 ## Naming Conventions
 
 - `*_indices` helpers return indices into the backing `Vec` (not display
-  order). When display order differs from storage (e.g. bookmarks
-  newest-first), the helper maps display→storage internally and returns
+  order). When display order differs from storage (e.g. bookmark compare
+  time-sort), the helper maps display→storage internally and returns
   storage indices.
 - `PickerKind` = which panel kind; `PickerMode` = Manage/New/Edit within
   that panel; `UnifiedKind` = item taxonomy inside the Unified aggregate
@@ -143,10 +154,10 @@ for O(1) LogList bg lookup. It is mutated in lockstep with every
 
 ## Examples
 
-- `bookmark_visible_indices` / `bookmark_selected_index` (`main.rs`):
-  newest-first display, maps back to real `app.bookmarks.items` index.
+- `BookmarkList::sorted_indices` / `App::compare_selected_storage_index`:
+  log-time display order, maps back to `bookmarks.items` storage index.
 - `unified_picker_items` (`main.rs`): aggregate for the Unified panel only
-  (Filter+Highlight+Exclude; Bookmark removed in 07-23-bookmark-ux).
+  (Filter+Highlight+Exclude; bookmarks are the compare tray, not picker rows).
 - `highlight_visible_indices` (`main.rs`) + `App::open_highlight_finder` /
   `activate_highlight_group`: LogList `/` find-or-create. Enable before
   jump (`jump_first_match_of` no-ops when disabled). Does not set
