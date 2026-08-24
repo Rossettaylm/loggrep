@@ -43,6 +43,7 @@ pub const PALETTE_IDS: &[ActionId] = &[
     ActionId::OpenStream,
     ActionId::TimeSet,
     ActionId::TimeClear,
+    ActionId::TimeHistogram,
     ActionId::LockPid,
     ActionId::LockTid,
     ActionId::LockViewHighlight,
@@ -75,6 +76,7 @@ pub fn when(app: &App, id: ActionId) -> bool {
             .is_some_and(|row| app.is_bookmark_row(row.row_id)),
         ActionId::TimeSet => file_mode && app.has_time_date_candidates(),
         ActionId::TimeClear => file_mode && app.time_bound.is_some(),
+        ActionId::TimeHistogram => file_mode && app.has_time_date_candidates(),
         ActionId::LogListClearLive => true, // LiveOnly on meta
         ActionId::LogListResumeFollow => !app.following,
         ActionId::LockClear => app.lock_pid.is_some() || app.lock_tid.is_some(),
@@ -231,6 +233,11 @@ pub fn dispatch(app: &mut App, id: ActionId) {
             }
         }
         TimeClear => app.clear_time_bound(),
+        TimeHistogram => {
+            if app.is_file_mode() {
+                let _ = app.open_hist_panel();
+            }
+        }
         ChipFieldTag => apply_chip_field(app, ChipField::Tag),
         ChipFieldMsg => apply_chip_field(app, ChipField::Msg),
         ChipFieldPkg => apply_chip_field(app, ChipField::Pkg),
@@ -322,6 +329,17 @@ pub fn dispatch(app: &mut App, id: ActionId) {
         | TimePanelDateUp
         | TimePanelDateDown
         | TimePanelCancel
+        | HistPanelPrev
+        | HistPanelNext
+        | HistPanelJumpDown
+        | HistPanelJumpUp
+        | HistPanelJumpTop
+        | HistPanelJumpBottom
+        | HistPanelZoomIn
+        | HistPanelZoomOut
+        | HistPanelSubmit
+        | HistPanelApplyWindow
+        | HistPanelCancel
         | InputDraftSpace
         | InputCommit
         | InputToggleExclude
@@ -507,6 +525,7 @@ mod tests {
             (ActionId::OpenStream, "Open Stream", theme::GLYPH_SOURCE_HDC),
             (ActionId::TimeSet, "Set Time Window", theme::GLYPH_TIME),
             (ActionId::TimeClear, "Clear Time Window", theme::GLYPH_TIME),
+            (ActionId::TimeHistogram, "Time Histogram", theme::GLYPH_TIME),
             (ActionId::LockPid, "Lock PID", theme::GLYPH_LOCK),
             (ActionId::LockTid, "Lock TID", theme::GLYPH_LOCK),
             (
@@ -589,6 +608,7 @@ mod tests {
         let ids: Vec<ActionId> = catalog(&app).iter().map(|i| i.id).collect();
         assert!(!ids.contains(&ActionId::TimeSet));
         assert!(!ids.contains(&ActionId::TimeClear));
+        assert!(!ids.contains(&ActionId::TimeHistogram));
         assert!(ids.contains(&ActionId::LogListClearLive));
     }
 

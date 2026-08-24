@@ -10,6 +10,7 @@ mod filter_model;
 mod fuzzy;
 mod help;
 mod highlight_model;
+mod hist_panel;
 mod ingest;
 mod input;
 mod keymap;
@@ -805,6 +806,7 @@ fn run<B: ratatui::backend::Backend>(
         app.ensure_vocab_candidates();
         app.poll_vocab_match();
         app.poll_summary_job();
+        app.poll_hist_job();
         app.tick_flash();
         // P1: recompute highlight match stats once per frame (O(n) scan).
         // All mutation paths set match_stats_stale=true; here is the single
@@ -989,6 +991,11 @@ fn run<B: ratatui::backend::Backend>(
                         let h = ui::summary_modal_height(frame_area, content_rows);
                         let area = ui::top_modal_rect(frame_area, modal_w.max(56), h);
                         ui::render_summary_panel(app, frame, area);
+                    } else if app.hist_open() {
+                        let content_rows = ui::hist_content_row_count(app);
+                        let h = ui::hist_modal_height(frame_area, content_rows);
+                        let area = ui::top_modal_rect(frame_area, modal_w.max(56), h);
+                        ui::render_hist_panel(app, frame, area);
                     }
                     // Preset name dialog paints above picker (rename) or alone (save).
                     if let Some(dialog) = app.preset_name.as_ref() {
@@ -1074,6 +1081,10 @@ fn run<B: ratatui::backend::Backend>(
         }
         if app.summary_open() {
             handle_summary_key(app, key);
+            continue;
+        }
+        if app.hist_open() {
+            handle_hist_panel_key(app, key);
             continue;
         }
         // Ctrl+C: quit from Normal (like `q`), but only cancel in-progress
@@ -2851,6 +2862,58 @@ fn handle_summary_key(app: &mut App, key: event::KeyEvent) {
     }
 }
 
+fn handle_hist_panel_key(app: &mut App, key: event::KeyEvent) {
+    use keymap::ActionId;
+    let ctrl = key.modifiers.contains(event::KeyModifiers::CONTROL);
+    if key.code == KeyCode::Char('c') && ctrl {
+        app.close_hist_panel();
+        return;
+    }
+    if km_code(app, ActionId::HistPanelCancel, key.code) || key.code == KeyCode::Esc {
+        app.close_hist_panel();
+        return;
+    }
+    if km_code(app, ActionId::HistPanelPrev, key.code) || key.code == KeyCode::Up {
+        app.move_hist_cursor(-1);
+        return;
+    }
+    if km_code(app, ActionId::HistPanelNext, key.code) || key.code == KeyCode::Down {
+        app.move_hist_cursor(1);
+        return;
+    }
+    if km_code(app, ActionId::HistPanelJumpDown, key.code) {
+        app.move_hist_cursor(FAST_SCROLL_STEP);
+        return;
+    }
+    if km_code(app, ActionId::HistPanelJumpUp, key.code) {
+        app.move_hist_cursor(-FAST_SCROLL_STEP);
+        return;
+    }
+    if km_code(app, ActionId::HistPanelJumpTop, key.code) {
+        app.jump_hist_cursor(false);
+        return;
+    }
+    if km_code(app, ActionId::HistPanelJumpBottom, key.code) {
+        app.jump_hist_cursor(true);
+        return;
+    }
+    if km_event(app, ActionId::HistPanelZoomOut, key) || key.code == KeyCode::Tab {
+        app.zoom_hist(false);
+        return;
+    }
+    if km_event(app, ActionId::HistPanelZoomIn, key) || key.code == KeyCode::BackTab {
+        app.zoom_hist(true);
+        return;
+    }
+    if km_code(app, ActionId::HistPanelSubmit, key.code) || key.code == KeyCode::Enter {
+        app.submit_hist_jump();
+        return;
+    }
+    if km_code(app, ActionId::HistPanelApplyWindow, key.code) {
+        app.apply_hist_window();
+    }
+}
+
 /// Route keys to the open `tt` time panel. Esc / Ctrl+C cancel without applying
 /// and do not resume following (same draft-cancel convention as Picker).
 fn handle_time_panel_key(app: &mut App, key: event::KeyEvent) {
@@ -3141,6 +3204,8 @@ fn handle_normal_key(app: &mut App, _input: &mut input::InputBox, code: KeyCode)
                 crate::action::dispatch(app, ActionId::TimeSet);
             } else if km_code(app, ActionId::TimeClear, code) {
                 crate::action::dispatch(app, ActionId::TimeClear);
+            } else if km_code(app, ActionId::TimeHistogram, code) {
+                crate::action::dispatch(app, ActionId::TimeHistogram);
             } else {
                 app.set_flash("UNKNOWN");
             }
@@ -6943,6 +7008,142 @@ mod dispatch_tests {
         assert!(!app.following);
         assert_eq!(app.visible.len(), 2);
         assert_eq!(app.status_msg.as_deref(), Some("TIME CLEARED"));
+    }
+
+    #[test]
+    fn test_th_opens_hist_enter_jumps_esc_closes() {
+        let mut app = App::new(100);
+        let mut input = input::InputBox::default();
+        app.export_source = export::ExportSource::File("demo.log".into());
+        drain_lines(
+            &mut app,
+            &[
+                "04-02 10:32:05.000  1  1 I Tag     : ok",
+                "04-02 10:32:30.000  1  1 E Tag     : boom",
+                "04-02 10:33:05.000  1  1 I Tag     : later",
+            ],
+        );
+        app.following = true;
+        handle_normal_key(&mut app, &mut input, KeyCode::Char('t'));
+        handle_normal_key(&mut app, &mut input, KeyCode::Char('h'));
+        assert!(app.hist_open());
+        assert!(!app.following);
+        app.flush_hist_job(std::time::Duration::from_secs(2));
+        if let crate::hist_panel::HistView::Ready(report) = &app.hist_view {
+            app.hist_cursor = report
+                .buckets
+                .iter()
+                .position(|b| b.severe > 0)
+                .expect("severe bucket");
+        }
+        handle_hist_panel_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Enter, event::KeyModifiers::NONE),
+        );
+        assert!(!app.hist_open());
+        assert_eq!(app.cursor, 1);
+
+        handle_normal_key(&mut app, &mut input, KeyCode::Char('t'));
+        handle_normal_key(&mut app, &mut input, KeyCode::Char('h'));
+        app.flush_hist_job(std::time::Duration::from_secs(2));
+        let following = app.following;
+        handle_hist_panel_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Esc, event::KeyModifiers::NONE),
+        );
+        assert!(!app.hist_open());
+        assert_eq!(app.following, following, "Esc does not resume following");
+    }
+
+    #[test]
+    fn test_hist_panel_fast_move_and_tab_cycles_interval() {
+        let mut app = App::new(100);
+        let mut input = input::InputBox::default();
+        app.export_source = export::ExportSource::File("demo.log".into());
+        let owned: Vec<String> = (0..20)
+            .map(|i| {
+                let total = i * 10;
+                format!(
+                    "04-02 10:{:02}:{:02}.000  1  1 I Tag     : n{i}",
+                    total / 60,
+                    total % 60
+                )
+            })
+            .collect();
+        let lines: Vec<&str> = owned.iter().map(String::as_str).collect();
+        drain_lines(&mut app, &lines);
+
+        handle_normal_key(&mut app, &mut input, KeyCode::Char('t'));
+        handle_normal_key(&mut app, &mut input, KeyCode::Char('h'));
+        app.flush_hist_job(std::time::Duration::from_secs(2));
+        let n = match &app.hist_view {
+            crate::hist_panel::HistView::Ready(r) => {
+                assert_eq!(r.interval_secs, 10);
+                assert!(r.buckets.len() >= 15, "need enough buckets for J/K");
+                r.buckets.len()
+            }
+            crate::hist_panel::HistView::Loading { .. } => panic!("expected Ready, still Loading"),
+            crate::hist_panel::HistView::Closed => panic!("expected Ready, got Closed"),
+        };
+        assert_eq!(app.hist_cursor, 0);
+
+        handle_hist_panel_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Char('J'), event::KeyModifiers::SHIFT),
+        );
+        assert_eq!(app.hist_cursor, crate::help::FAST_SCROLL_STEP as usize);
+        handle_hist_panel_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Char('K'), event::KeyModifiers::SHIFT),
+        );
+        assert_eq!(app.hist_cursor, 0);
+        handle_hist_panel_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Char('G'), event::KeyModifiers::SHIFT),
+        );
+        assert_eq!(app.hist_cursor, n - 1);
+        handle_hist_panel_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Char('g'), event::KeyModifiers::NONE),
+        );
+        assert_eq!(app.hist_cursor, 0);
+
+        let interval = |app: &App| match &app.hist_view {
+            crate::hist_panel::HistView::Ready(r) => r.interval_secs,
+            crate::hist_panel::HistView::Loading { interval_secs } => *interval_secs,
+            crate::hist_panel::HistView::Closed => panic!("hist closed"),
+        };
+
+        handle_hist_panel_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Char('z'), event::KeyModifiers::NONE),
+        );
+        assert_eq!(interval(&app), 10, "z must no longer change interval");
+
+        handle_hist_panel_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Tab, event::KeyModifiers::NONE),
+        );
+        app.flush_hist_job(std::time::Duration::from_secs(2));
+        assert_eq!(interval(&app), 60);
+        handle_hist_panel_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Tab, event::KeyModifiers::NONE),
+        );
+        app.flush_hist_job(std::time::Duration::from_secs(2));
+        assert_eq!(interval(&app), 300);
+        handle_hist_panel_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::Tab, event::KeyModifiers::NONE),
+        );
+        app.flush_hist_job(std::time::Duration::from_secs(2));
+        assert_eq!(interval(&app), 10);
+        handle_hist_panel_key(
+            &mut app,
+            event::KeyEvent::new(KeyCode::BackTab, event::KeyModifiers::SHIFT),
+        );
+        app.flush_hist_job(std::time::Duration::from_secs(2));
+        assert_eq!(interval(&app), 300);
     }
 
     #[test]

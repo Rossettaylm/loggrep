@@ -36,7 +36,7 @@ pub fn parse_interval(s: &str) -> Result<u64, String> {
 }
 
 /// Convert HH:MM:SS to total seconds since midnight.
-fn hms_to_secs(hms: &str) -> Option<u64> {
+pub fn hms_to_secs(hms: &str) -> Option<u64> {
     if hms.len() < 8 {
         return None;
     }
@@ -55,8 +55,60 @@ fn snap_secs(secs: u64, interval: u64) -> String {
     format!("{h:02}:{m:02}:{s:02}")
 }
 
+/// TUI histogram zoom steps (matches CLI `--histogram` 10s/1m/5m).
+pub const INTERVAL_SECS: [u64; 3] = [10, 60, 300];
+
+/// Pick a default bucket width from the visible time span.
+pub fn pick_interval_secs(span_secs: u64) -> u64 {
+    if span_secs <= 10 * 60 {
+        10
+    } else if span_secs <= 2 * 3600 {
+        60
+    } else {
+        300
+    }
+}
+
+/// Cycle 10s ↔ 1m ↔ 5m, wrapping at both ends.
+/// `finer` shrinks the bucket (5m → 1m → 10s → 5m).
+pub fn cycle_interval_secs(current: u64, finer: bool) -> u64 {
+    let idx = INTERVAL_SECS
+        .iter()
+        .position(|&s| s == current)
+        .unwrap_or(1);
+    let n = INTERVAL_SECS.len() as isize;
+    let next = if finer {
+        idx as isize - 1
+    } else {
+        idx as isize + 1
+    };
+    INTERVAL_SECS[next.rem_euclid(n) as usize]
+}
+
+pub fn format_interval(secs: u64) -> &'static str {
+    match secs {
+        10 => "10s",
+        60 => "1m",
+        300 => "5m",
+        _ => "1m",
+    }
+}
+
+/// Inclusive end key for a bucket (`since` = `key`, `until` = this).
+pub fn bucket_until(key: &str, interval_secs: u64) -> Option<String> {
+    if interval_secs == 0 {
+        return None;
+    }
+    let (prefix, hms) = key.rsplit_once(' ')?;
+    let start = hms_to_secs(hms)?;
+    let end = start
+        .saturating_add(interval_secs.saturating_sub(1))
+        .min(24 * 3600 - 1);
+    Some(format!("{prefix} {}", snap_secs(end, 1)))
+}
+
 /// Build the bucket key from a log entry's timestamp.
-fn bucket_key(entry: &LogEntry, interval_secs: u64) -> Option<String> {
+pub fn bucket_key(entry: &LogEntry, interval_secs: u64) -> Option<String> {
     // Try full datetime first (xlog: "YYYY-MM-DD HH:MM:SS", threadtime: "MM-DD HH:MM:SS")
     let ts = entry.timestamp.trim();
 
@@ -240,5 +292,26 @@ mod tests {
         assert!(h.buckets.contains_key("2026-03-04 10:32:00"));
         assert!(h.buckets.contains_key("2026-03-04 10:32:10"));
         assert!(h.buckets.contains_key("2026-03-04 10:32:20"));
+    }
+
+    #[test]
+    fn test_bucket_until_and_zoom() {
+        assert_eq!(
+            bucket_until("04-02 10:32:00", 60).as_deref(),
+            Some("04-02 10:32:59")
+        );
+        assert_eq!(
+            bucket_until("04-02 10:32:00", 10).as_deref(),
+            Some("04-02 10:32:09")
+        );
+        assert_eq!(pick_interval_secs(30), 10);
+        assert_eq!(pick_interval_secs(700), 60);
+        assert_eq!(pick_interval_secs(10_000), 300);
+        assert_eq!(cycle_interval_secs(60, true), 10);
+        assert_eq!(cycle_interval_secs(10, true), 300);
+        assert_eq!(cycle_interval_secs(300, true), 60);
+        assert_eq!(cycle_interval_secs(60, false), 300);
+        assert_eq!(cycle_interval_secs(300, false), 10);
+        assert_eq!(cycle_interval_secs(10, false), 60);
     }
 }

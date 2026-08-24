@@ -7,6 +7,7 @@ use crate::bookmark::{AddError, Bookmark, BookmarkList, ComparePanel, JumpResult
 use crate::filter_model::{ExcludeEntry, Group, GroupList, TimeBound};
 use crate::help::{HelpPage, HelpSearch, HelpView};
 use crate::highlight_model::{HighlightBox, HighlightGroup, HighlightGroupList};
+use crate::hist_panel::{self, HistJobMsg, HistView};
 use crate::model::{is_severe_row, EntryRow};
 use crate::scan::{HighlightDomain, HighlightScanState};
 use crate::store::{FileEvent, FileStore, RowRef, RowStore, StreamStore};
@@ -278,6 +279,57 @@ fn spawn_stream_summary_job(
     });
 }
 
+fn spawn_file_hist_job(
+    mmap: Arc<memmap2::Mmap>,
+    lines: Arc<std::sync::RwLock<Vec<crate::store::LineSpan>>>,
+    target: SummaryTarget,
+    interval_secs: u64,
+    gen: u64,
+    tx: std::sync::mpsc::Sender<HistJobMsg>,
+) {
+    std::thread::spawn(move || {
+        let mut pairs = Vec::new();
+        match target {
+            SummaryTarget::All(len) => {
+                for i in 0..len {
+                    let row = {
+                        let guard = lines.read().expect("lines");
+                        crate::scan::parse_line_at(&mmap, &guard, i)
+                    };
+                    if let Some(row) = row {
+                        pairs.push((i, row));
+                    }
+                }
+            }
+            SummaryTarget::Subset(hits) => {
+                for (vis_i, src) in hits.into_iter().enumerate() {
+                    let row = {
+                        let guard = lines.read().expect("lines");
+                        crate::scan::parse_line_at(&mmap, &guard, src)
+                    };
+                    if let Some(row) = row {
+                        pairs.push((vis_i, row));
+                    }
+                }
+            }
+        }
+        let report = hist_panel::build_report(pairs, interval_secs);
+        let _ = tx.send(HistJobMsg { gen, report });
+    });
+}
+
+fn spawn_stream_hist_job(
+    pairs: Vec<(usize, EntryRow)>,
+    interval_secs: u64,
+    gen: u64,
+    tx: std::sync::mpsc::Sender<HistJobMsg>,
+) {
+    std::thread::spawn(move || {
+        let report = hist_panel::build_report(pairs, interval_secs);
+        let _ = tx.send(HistJobMsg { gen, report });
+    });
+}
+
 pub struct App {
     /// Stream (live/tests) or mmap file (`-f`) row backend.
     pub store: RowStore,
@@ -418,6 +470,12 @@ pub struct App {
     pub summary_scroll: usize,
     summary_tx: std::sync::mpsc::Sender<SummaryJobMsg>,
     summary_rx: std::sync::mpsc::Receiver<SummaryJobMsg>,
+    pub hist_view: HistView,
+    hist_gen: u64,
+    pub hist_cursor: usize,
+    hist_restore_key: Option<String>,
+    hist_tx: std::sync::mpsc::Sender<HistJobMsg>,
+    hist_rx: std::sync::mpsc::Receiver<HistJobMsg>,
 }
 
 #[derive(Debug, Default)]
@@ -430,6 +488,7 @@ struct PreviewThrottleCache {
 impl App {
     pub fn new(max_lines: usize) -> Self {
         let (summary_tx, summary_rx) = std::sync::mpsc::channel();
+        let (hist_tx, hist_rx) = std::sync::mpsc::channel();
         Self {
             store: RowStore::stream(max_lines, MATCHED_HARD_CAP),
             matched_cap: MATCHED_HARD_CAP,
@@ -504,6 +563,12 @@ impl App {
             summary_scroll: 0,
             summary_tx,
             summary_rx,
+            hist_view: HistView::Closed,
+            hist_gen: 0,
+            hist_cursor: 0,
+            hist_restore_key: None,
+            hist_tx,
+            hist_rx,
         }
     }
 
@@ -636,6 +701,7 @@ impl App {
             || self.help_open
             || self.compare.is_some()
             || self.summary_open()
+            || self.hist_open()
             || self.dashboard.is_some()
             || self.open_file_panel.is_some()
             || self.stream_source_panel.is_some()
@@ -854,6 +920,8 @@ impl App {
         self.help_search = None;
         self.summary_view = SummaryView::Closed;
         self.summary_scroll = 0;
+        self.hist_view = HistView::Closed;
+        self.hist_cursor = 0;
         self.highlight_box = HighlightBox::default();
         self.active_highlight = None;
         self.pending_jump_first = None;
@@ -1282,6 +1350,206 @@ impl App {
                 Err(_) => break,
             }
         }
+    }
+
+    /// Scroll the summary panel body; only active while `Ready`. Upper bound
+    /// is clamped at render time against the built content length.
+    pub fn hist_open(&self) -> bool {
+        !matches!(self.hist_view, HistView::Closed)
+    }
+
+    fn hist_interval_default(&self) -> u64 {
+        let catalog =
+            crate::time_panel::DateCatalog::from_rows(self.sample_rows_for_dates().iter());
+        if catalog.dates.len() != 1 {
+            return hist_panel::pick_interval_from_span(u64::MAX / 2);
+        }
+        let d = &catalog.dates[0];
+        let span = match (
+            alnav::histogram::hms_to_secs(&d.max_hms),
+            alnav::histogram::hms_to_secs(&d.min_hms),
+        ) {
+            (Some(max), Some(min)) => max.saturating_sub(min),
+            _ => 60,
+        };
+        hist_panel::pick_interval_from_span(span)
+    }
+
+    fn spawn_hist_job(&mut self, interval_secs: u64) {
+        self.hist_gen = self.hist_gen.wrapping_add(1);
+        let gen = self.hist_gen;
+        self.hist_view = HistView::Loading { interval_secs };
+        match &self.store {
+            RowStore::File(f) => {
+                let (mmap, lines) = f.scan_snapshot();
+                let target = match &self.visible {
+                    Visible::All { len } => SummaryTarget::All(*len),
+                    Visible::Subset(v) => SummaryTarget::Subset(v.clone()),
+                };
+                spawn_file_hist_job(
+                    mmap,
+                    lines,
+                    target,
+                    interval_secs,
+                    gen,
+                    self.hist_tx.clone(),
+                );
+            }
+            RowStore::Stream(_) => {
+                let n = self.visible.len();
+                let mut pairs = Vec::with_capacity(n);
+                for i in 0..n {
+                    if let Some(row) = self.row_at(i) {
+                        pairs.push((i, row.into_owned()));
+                    }
+                }
+                spawn_stream_hist_job(pairs, interval_secs, gen, self.hist_tx.clone());
+            }
+        }
+    }
+
+    /// `th`: open the time histogram over current `visible`. File export only.
+    pub fn open_hist_panel(&mut self) -> bool {
+        self.pending_time = false;
+        if !self.is_file_mode() {
+            return false;
+        }
+        if !self.has_time_date_candidates() {
+            self.set_flash("NO DATES");
+            return false;
+        }
+        self.following = false;
+        self.time_panel = None;
+        self.close_summary_panel();
+        self.hist_cursor = 0;
+        self.spawn_hist_job(self.hist_interval_default());
+        true
+    }
+
+    pub fn close_hist_panel(&mut self) {
+        self.hist_gen = self.hist_gen.wrapping_add(1);
+        self.hist_view = HistView::Closed;
+        self.hist_cursor = 0;
+    }
+
+    pub fn poll_hist_job(&mut self) {
+        while let Ok(msg) = self.hist_rx.try_recv() {
+            if msg.gen != self.hist_gen {
+                continue;
+            }
+            if msg.report.buckets.is_empty() {
+                self.hist_view = HistView::Closed;
+                self.hist_restore_key = None;
+                self.set_flash("NO DATES");
+                continue;
+            }
+            self.hist_cursor = if let Some(key) = self.hist_restore_key.take() {
+                msg.report.index_for_key(&key)
+            } else {
+                self.hist_cursor.min(msg.report.buckets.len() - 1)
+            };
+            self.hist_view = HistView::Ready(msg.report);
+        }
+    }
+
+    pub fn flush_hist_job(&mut self, timeout: std::time::Duration) {
+        let deadline = std::time::Instant::now() + timeout;
+        while matches!(self.hist_view, HistView::Loading { .. }) {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            match self.hist_rx.recv_timeout(remaining) {
+                Ok(msg) => {
+                    if msg.gen == self.hist_gen {
+                        if msg.report.buckets.is_empty() {
+                            self.hist_view = HistView::Closed;
+                            self.hist_restore_key = None;
+                            self.set_flash("NO DATES");
+                        } else {
+                            self.hist_cursor = if let Some(key) = self.hist_restore_key.take() {
+                                msg.report.index_for_key(&key)
+                            } else {
+                                self.hist_cursor.min(msg.report.buckets.len() - 1)
+                            };
+                            self.hist_view = HistView::Ready(msg.report);
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    }
+
+    pub fn move_hist_cursor(&mut self, delta: isize) {
+        let HistView::Ready(report) = &self.hist_view else {
+            return;
+        };
+        let n = report.buckets.len() as isize;
+        if n == 0 {
+            return;
+        }
+        let next = (self.hist_cursor as isize + delta).clamp(0, n - 1);
+        self.hist_cursor = next as usize;
+    }
+
+    pub fn jump_hist_cursor(&mut self, to_last: bool) {
+        let HistView::Ready(report) = &self.hist_view else {
+            return;
+        };
+        if report.buckets.is_empty() {
+            return;
+        }
+        self.hist_cursor = if to_last { report.buckets.len() - 1 } else { 0 };
+    }
+
+    pub fn zoom_hist(&mut self, finer: bool) {
+        let current = match &self.hist_view {
+            HistView::Ready(r) => r.interval_secs,
+            HistView::Loading { interval_secs } => *interval_secs,
+            HistView::Closed => return,
+        };
+        let keep_key = match &self.hist_view {
+            HistView::Ready(r) => r.buckets.get(self.hist_cursor).map(|b| b.key.clone()),
+            _ => None,
+        };
+        let next = alnav::histogram::cycle_interval_secs(current, finer);
+        if next == current {
+            return;
+        }
+        self.hist_restore_key = keep_key;
+        self.spawn_hist_job(next);
+    }
+
+    pub fn submit_hist_jump(&mut self) {
+        let HistView::Ready(report) = &self.hist_view else {
+            return;
+        };
+        let Some(bucket) = report.buckets.get(self.hist_cursor) else {
+            return;
+        };
+        let idx = bucket.jump_visible();
+        self.close_hist_panel();
+        if self.visible.is_empty() {
+            return;
+        }
+        self.following = false;
+        self.cursor = idx.min(self.visible.len() - 1);
+        self.match_stats_stale = true;
+    }
+
+    pub fn apply_hist_window(&mut self) {
+        let HistView::Ready(report) = &self.hist_view else {
+            return;
+        };
+        let Some(bucket) = report.buckets.get(self.hist_cursor) else {
+            return;
+        };
+        let Some(bound) = bucket.time_bound(report.interval_secs) else {
+            return;
+        };
+        self.close_hist_panel();
+        self.apply_time_bound(bound);
     }
 
     /// Scroll the summary panel body; only active while `Ready`. Upper bound
@@ -4188,6 +4456,63 @@ mod tests {
 
         app.close_summary_panel();
         assert!(!app.summary_open());
+    }
+
+    #[test]
+    fn hist_panel_jumps_to_severe_and_applies_window() {
+        let mut app = App::new(100);
+        app.export_source = crate::export::ExportSource::File("demo.log".into());
+        let (tx, rx) = mpsc::channel();
+        tx.send(EntryRow::from_line("04-02 10:32:05.000  1  1 I Tag     : ok").unwrap())
+            .unwrap();
+        tx.send(EntryRow::from_line("04-02 10:32:30.000  1  1 E Tag     : boom").unwrap())
+            .unwrap();
+        tx.send(EntryRow::from_line("04-02 10:33:05.000  1  1 I Tag     : later").unwrap())
+            .unwrap();
+        drop(tx);
+        app.drain(&rx);
+        app.following = true;
+        assert!(app.open_hist_panel());
+        assert!(!app.following);
+        app.flush_hist_job(std::time::Duration::from_secs(2));
+        assert!(app.hist_open());
+        let crate::hist_panel::HistView::Ready(report) = &app.hist_view else {
+            panic!("expected ready hist");
+        };
+        assert!(report.buckets.len() >= 2);
+        let severe_i = report
+            .buckets
+            .iter()
+            .position(|b| b.severe > 0)
+            .expect("severe bucket");
+        app.hist_cursor = severe_i;
+        app.submit_hist_jump();
+        assert!(!app.hist_open());
+        assert_eq!(app.cursor, 1, "severe bucket jumps to its E row");
+
+        assert!(app.open_hist_panel());
+        app.flush_hist_job(std::time::Duration::from_secs(2));
+        let crate::hist_panel::HistView::Ready(report) = &app.hist_view else {
+            panic!("expected ready hist");
+        };
+        app.hist_cursor = report
+            .buckets
+            .iter()
+            .position(|b| b.severe > 0)
+            .expect("severe bucket");
+        app.apply_hist_window();
+        assert!(!app.hist_open());
+        assert!(app.time_bound.as_ref().is_some_and(|t| t.is_active()));
+        assert_eq!(app.visible.len(), 1, "severe bucket window keeps the E row");
+    }
+
+    #[test]
+    fn hist_panel_no_dates_flashes() {
+        let mut app = App::new(100);
+        app.export_source = crate::export::ExportSource::File("demo.log".into());
+        assert!(!app.open_hist_panel());
+        assert_eq!(app.status_msg.as_deref(), Some("NO DATES"));
+        assert!(!app.hist_open());
     }
 
     #[test]

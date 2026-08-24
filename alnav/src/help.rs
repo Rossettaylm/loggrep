@@ -52,6 +52,7 @@ pub enum ContextKind {
     Picker,
     HighlightModal,
     TimePanel,
+    HistPanel,
     Detail,
     Leader,
     Bookmark,
@@ -77,6 +78,7 @@ impl ContextKind {
             Self::Picker => "Picker",
             Self::HighlightModal => "Highlight edit",
             Self::TimePanel => "Time window",
+            Self::HistPanel => "Histogram",
             Self::Detail => "Detail",
             Self::Leader => "Leader",
             Self::Bookmark => "Bookmark",
@@ -304,6 +306,9 @@ pub fn context_kind(app: &App) -> ContextKind {
     }
     if app.time_panel.is_some() {
         return ContextKind::TimePanel;
+    }
+    if app.hist_open() {
+        return ContextKind::HistPanel;
     }
     if app.compare.is_some() {
         return ContextKind::Compare;
@@ -684,8 +689,39 @@ pub fn context_entries(app: &App) -> Vec<HintEntry> {
         ContextKind::Time => {
             let mut out = Vec::new();
             push_short(&mut out, app, ActionId::TimeSet, "set");
+            push_short(&mut out, app, ActionId::TimeHistogram, "hist");
             push_short(&mut out, app, ActionId::TimeClear, "clear");
             push_short(&mut out, app, ActionId::TimeCancel, "cancel");
+            out
+        }
+        ContextKind::HistPanel => {
+            let mut out = Vec::new();
+            push_short(&mut out, app, ActionId::HistPanelNext, "next");
+            push_short(&mut out, app, ActionId::HistPanelPrev, "prev");
+            push_agg(
+                &mut out,
+                app,
+                &[ActionId::HistPanelJumpDown, ActionId::HistPanelJumpUp],
+                "fast",
+                "move 7 buckets",
+            );
+            push_agg(
+                &mut out,
+                app,
+                &[ActionId::HistPanelJumpTop, ActionId::HistPanelJumpBottom],
+                "ends",
+                "first or last bucket",
+            );
+            push_short(&mut out, app, ActionId::HistPanelSubmit, "jump");
+            push_short(&mut out, app, ActionId::HistPanelApplyWindow, "window");
+            push_agg(
+                &mut out,
+                app,
+                &[ActionId::HistPanelZoomOut, ActionId::HistPanelZoomIn],
+                "interval",
+                "cycle bucket width 10s/1m/5m",
+            );
+            push_short(&mut out, app, ActionId::HistPanelCancel, "close");
             out
         }
         ContextKind::ChipField => {
@@ -856,6 +892,7 @@ pub fn page_blurb(page: HelpPage) -> &'static [&'static str] {
         HelpPage::Session => &[
             "Lock PID and lock TID are mutually exclusive and AND after chips.",
             "The global time window is file-only and orthogonal to Filter groups.",
+            "`th` opens a time histogram over the current visible rows; Enter jumps, s sets the window, J/K/g/G move, Tab cycles 10s/1m/5m.",
             "Bookmarks are session-only snapshot pins with a compare panel (`mm`).",
             "Follow and device/file state live in the status bar, not in a chip group.",
         ],
@@ -869,6 +906,7 @@ pub fn page_blurb(page: HelpPage) -> &'static [&'static str] {
             "Fields (`p`) and Pretty (`P`) are a top modal on the current row; Esc closes the overlay only and does not resume following.",
             "Pretty pretty-prints JSON in msg (then raw).",
             "The command palette (`C-p`) is not a Picker: an empty query shows no list.",
+            "File-mode `th` opens a time histogram over visible rows (Enter jumps, s sets the window, Tab cycles 10s/1m/5m).",
             "This Help panel's own keys are on the Home footer, not in this list.",
         ],
     }
@@ -1110,6 +1148,16 @@ fn page_entries(app: &App, page: HelpPage) -> Vec<HintEntry> {
                         format!("{t} {tt}/{tu}"),
                         "time",
                         "set / clear global time window (file only)",
+                    ));
+                }
+                if let (Some(t), Some(th)) = (
+                    key_of(app, ActionId::LogListTime),
+                    key_of(app, ActionId::TimeHistogram),
+                ) {
+                    session.push(HintEntry::new(
+                        format!("{t} {th}"),
+                        "hist",
+                        "time histogram: jump or set window (file only)",
                     ));
                 }
             }
@@ -1520,6 +1568,7 @@ pub enum HomeHitKind {
 pub fn help_available(app: &App) -> bool {
     if app.picker.is_some()
         || app.time_panel.is_some()
+        || app.hist_open()
         || app.detail_open()
         || app.highlight_box.editing
         || app.command_palette.is_some()
