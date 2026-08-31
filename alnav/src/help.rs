@@ -880,7 +880,7 @@ pub fn page_blurb(page: HelpPage) -> &'static [&'static str] {
         HelpPage::Highlight => &[
             "Highlight groups paint matching text; they do not hide rows.",
             "Enabled patterns are OR and walk the 8-slot color ramp in order.",
-            "`/` on LogList finds or creates a highlight and jumps to the first hit; `/` inside this Help panel is search and does not create a highlight.",
+            "`/` on LogList finds or creates a highlight and jumps to the first hit; existing hits stay listed, then a create row for a non-exact query. `/` inside this Help panel is search and does not create a highlight.",
             "Command palette Add Highlight always opens New. Unified Enter still toggles enable without jumping.",
         ],
         HelpPage::Log => &[
@@ -899,7 +899,8 @@ pub fn page_blurb(page: HelpPage) -> &'static [&'static str] {
         HelpPage::Picker => &[
             "Space is Leader; Space Space opens unified Manage.",
             "Bare `;` and backtick force New for Filter / Exclude. `/` finds or creates a Highlight.",
-            "Unified Manage stays in Manage when nothing matches. Highlight finder auto-opens New.",
+            "Unified Manage stays in Manage when nothing matches. Highlight finder appends a create row when the query is not an exact existing pattern, and auto-opens New on zero hits.",
+            "`C-t` in unified Manage flips every target on or off: Tab-checked rows when any are checked, else the query-visible rows.",
             "The compare tray (`mm`) is not this unified picker.",
         ],
         HelpPage::Overlays => &[

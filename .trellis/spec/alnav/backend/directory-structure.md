@@ -104,7 +104,10 @@ Manage mode is dispatched **by `session.kind`** in two places:
   `Highlight` (finder): no Tab multi-select; Enter =
   `activate_highlight_group` + close; Ctrl-X = edit; Delete /
   Ctrl-Backspace = delete confirm; nonempty query + zero hits →
-  `enter_new_with_draft` (`auto_from_manage`); last group deleted → New.
+  `enter_new_with_draft` (`auto_from_manage`); nonempty query that is
+  not an exact existing pattern (ignore-case) appends a trailing create
+  row (`GLYPH_MODE_NEW` + query); Down can select it; Enter on that row
+  creates the query and closes; last group deleted → New.
   `Preset` is Manage-only (no auto-New): Enter = apply, Ctrl-X = rename
   name dialog, Delete = `ConfirmKind::DeletePreset`; save is `C-s`
   outside the picker.

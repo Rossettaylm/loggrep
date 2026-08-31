@@ -3691,6 +3691,72 @@ impl App {
         }
     }
 
+    /// Read `enabled` of a unified Manage item; `None` when the index is stale.
+    pub fn unified_enabled(&self, id: crate::picker::UnifiedId) -> Option<bool> {
+        use crate::picker::UnifiedKind;
+        match id.kind {
+            UnifiedKind::Filter => self.groups.groups.get(id.source_index).map(|g| g.enabled),
+            UnifiedKind::Highlight => self
+                .highlight_groups
+                .groups
+                .get(id.source_index)
+                .map(|g| g.enabled),
+            UnifiedKind::Exclude => self.groups.excludes.get(id.source_index).map(|e| e.enabled),
+        }
+    }
+
+    /// Force `enabled` on many unified items, rebuilding once at the end.
+    /// Returns how many items actually changed state.
+    pub fn set_unified_enabled_bulk(
+        &mut self,
+        ids: &[crate::picker::UnifiedId],
+        enabled: bool,
+    ) -> usize {
+        use crate::picker::UnifiedKind;
+        let mut changed = 0usize;
+        let mut rows_dirty = false;
+        let mut highlight_dirty = false;
+        for id in ids {
+            let slot = match id.kind {
+                UnifiedKind::Filter => self
+                    .groups
+                    .groups
+                    .get_mut(id.source_index)
+                    .map(|g| &mut g.enabled),
+                UnifiedKind::Highlight => self
+                    .highlight_groups
+                    .groups
+                    .get_mut(id.source_index)
+                    .map(|g| &mut g.enabled),
+                UnifiedKind::Exclude => self
+                    .groups
+                    .excludes
+                    .get_mut(id.source_index)
+                    .map(|e| &mut e.enabled),
+            };
+            let Some(slot) = slot else { continue };
+            if *slot == enabled {
+                continue;
+            }
+            *slot = enabled;
+            changed += 1;
+            match id.kind {
+                UnifiedKind::Filter | UnifiedKind::Exclude => rows_dirty = true,
+                UnifiedKind::Highlight => highlight_dirty = true,
+            }
+        }
+        if highlight_dirty {
+            self.match_stats_stale = true;
+            if self.store.is_file() {
+                self.restart_highlight_scan();
+            }
+        }
+        if rows_dirty {
+            self.rebuild_visible();
+        }
+        changed
+    }
+
     /// Delete a unified Manage item by kind + source index.
     pub fn delete_unified_at(&mut self, kind: crate::picker::UnifiedKind, index: usize) -> bool {
         use crate::picker::UnifiedKind;

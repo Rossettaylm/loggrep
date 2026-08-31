@@ -1259,9 +1259,21 @@ fn picker_render_data(
                     .collect();
                 checked = vec![false; vis.len()];
                 actions = vec![crate::ui::ActionKind::Jump; vis.len()];
+                if let Some(query) = highlight_create_query(app) {
+                    labels.push(highlight_create_row_label(query));
+                    styles.push(theme::picker_mode_style());
+                    checked.push(false);
+                    actions.push(crate::ui::ActionKind::None);
+                }
                 empty_msg = "no highlights".to_string();
                 if show_preview {
-                    if let Some(&idx) = vis.get(session.selected) {
+                    if highlight_create_row_selected(app) {
+                        if let Some(query) = highlight_create_query(app) {
+                            preview_lines =
+                                preview::preview_highlight_pattern_lines(app, query, preview_limit)
+                                    .unwrap_or_default();
+                        }
+                    } else if let Some(&idx) = vis.get(session.selected) {
                         preview_lines = preview::preview_highlight_pattern_lines(
                             app,
                             &app.highlight_groups.groups[idx].pattern,
@@ -1532,10 +1544,57 @@ fn highlight_visible_indices(app: &App) -> Vec<usize> {
     PickerSession::filtered_indices(&labels, session.query.as_str())
 }
 
+/// Manage create-row query when typed text is not an exact existing pattern.
+fn highlight_create_query(app: &App) -> Option<&str> {
+    use crate::picker::{PickerKind, PickerMode};
+    let session = app.picker.as_ref()?;
+    if session.kind != PickerKind::Highlight || !matches!(session.mode, PickerMode::Manage) {
+        return None;
+    }
+    let query = session.query.as_str();
+    if query.is_empty() {
+        return None;
+    }
+    if app
+        .highlight_groups
+        .groups
+        .iter()
+        .any(|g| g.same_pattern_as(query))
+    {
+        return None;
+    }
+    Some(query)
+}
+
+fn highlight_create_row_label(query: &str) -> String {
+    format!("{} {query}", theme::GLYPH_MODE_NEW)
+}
+
+fn highlight_manage_len(app: &App) -> usize {
+    highlight_visible_indices(app).len() + usize::from(highlight_create_query(app).is_some())
+}
+
+fn highlight_create_row_selected(app: &App) -> bool {
+    let selected = app.picker.as_ref().map(|s| s.selected).unwrap_or(0);
+    highlight_create_query(app).is_some() && selected == highlight_visible_indices(app).len()
+}
+
 fn highlight_selected_index(app: &App) -> Option<usize> {
     let vis = highlight_visible_indices(app);
     let session = app.picker.as_ref()?;
     vis.get(session.selected).copied()
+}
+
+fn submit_highlight_create_query(app: &mut App) {
+    let Some(query) = highlight_create_query(app).map(str::to_string) else {
+        return;
+    };
+    let Some(group) = crate::highlight_model::HighlightGroup::from_pattern(&query) else {
+        return;
+    };
+    let idx = app.push_or_find_highlight_group(group);
+    let _ = app.activate_highlight_group(idx);
+    app.close_picker();
 }
 
 fn maybe_highlight_auto_new(app: &mut App) {
@@ -1825,6 +1884,35 @@ fn manage_request_delete_selected(app: &mut App) {
     }
 }
 
+/// `C-t` in unified Manage: flip every target item on or off in one shot.
+/// Targets are the Tab-checked set when non-empty, else the query-visible rows.
+/// Any enabled target → disable all; none enabled → enable all.
+fn manage_toggle_all(app: &mut App) {
+    let checked: Vec<crate::picker::UnifiedId> = app
+        .picker
+        .as_ref()
+        .map(|session| session.checked.iter().copied().collect())
+        .unwrap_or_default();
+    let targets = if checked.is_empty() {
+        unified_visible_ids(app)
+    } else {
+        checked
+    };
+    if targets.is_empty() {
+        return;
+    }
+    let any_enabled = targets
+        .iter()
+        .any(|&id| app.unified_enabled(id).unwrap_or(false));
+    let enable = !any_enabled;
+    app.set_unified_enabled_bulk(&targets, enable);
+    app.set_flash(if enable {
+        "ALL ENABLED"
+    } else {
+        "ALL DISABLED"
+    });
+}
+
 fn manage_enter_edit_selected(app: &mut App) {
     if app.picker.as_ref().is_some_and(|s| s.checked.len() > 1) {
         app.set_flash("NO BULK EDIT");
@@ -1981,7 +2069,7 @@ fn handle_picker_key(app: &mut App, key: event::KeyEvent) {
                 return;
             }
             PickerKind::Highlight => {
-                let vis = highlight_visible_indices(app);
+                let list_len = highlight_manage_len(app);
                 let is_delete = matches!(key.code, KeyCode::Delete)
                     || (matches!(key.code, KeyCode::Char('d')) && ctrl);
                 match key.code {
@@ -1991,7 +2079,7 @@ fn handle_picker_key(app: &mut App, key: event::KeyEvent) {
                     }
                     KeyCode::Down => {
                         let session = app.picker.as_mut().unwrap();
-                        session.selected = (session.selected + 1).min(vis.len().saturating_sub(1));
+                        session.selected = (session.selected + 1).min(list_len.saturating_sub(1));
                     }
                     KeyCode::Tab => {}
                     KeyCode::Char('x') if ctrl => {
@@ -2011,7 +2099,9 @@ fn handle_picker_key(app: &mut App, key: event::KeyEvent) {
                         }
                     }
                     KeyCode::Enter => {
-                        if let Some(idx) = highlight_selected_index(app) {
+                        if highlight_create_row_selected(app) {
+                            submit_highlight_create_query(app);
+                        } else if let Some(idx) = highlight_selected_index(app) {
                             let _ = app.activate_highlight_group(idx);
                             app.close_picker();
                         }
@@ -2053,6 +2143,7 @@ fn handle_picker_key(app: &mut App, key: event::KeyEvent) {
                         let count = ids.len();
                         session.selected = (session.selected + 1).min(count.saturating_sub(1));
                     }
+                    KeyCode::Char('t') if ctrl => manage_toggle_all(app),
                     KeyCode::Char('x') if ctrl => manage_enter_edit_selected(app),
                     _ if is_delete => manage_request_delete_selected(app),
                     KeyCode::Enter => {
@@ -4659,6 +4750,96 @@ mod dispatch_tests {
     }
 
     #[test]
+    fn highlight_manage_create_row_skips_prefix_hit() {
+        use crate::highlight_model::HighlightGroup;
+        use crate::picker::PickerMode;
+
+        let mut app = App::new(100);
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("unreadItem").unwrap());
+        app.open_highlight_finder();
+        for c in "unread".chars() {
+            handle_picker_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+            );
+        }
+        assert_eq!(app.picker.as_ref().unwrap().mode, PickerMode::Manage);
+        let data = picker_render_data(&app, 10, 80).unwrap();
+        assert_eq!(
+            data.labels,
+            vec![
+                "unreadItem".to_string(),
+                format!("{} unread", theme::GLYPH_MODE_NEW),
+            ]
+        );
+        handle_picker_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        handle_picker_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.highlight_groups.groups.len(), 2);
+        assert_eq!(app.highlight_groups.groups[1].pattern, "unread");
+        assert_eq!(app.active_highlight, Some(1));
+        assert!(app.picker.is_none());
+    }
+
+    #[test]
+    fn highlight_manage_exact_query_hides_create_row() {
+        use crate::highlight_model::HighlightGroup;
+        use crate::picker::PickerMode;
+
+        let mut app = App::new(100);
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("unreadItem").unwrap());
+        app.open_highlight_finder();
+        for c in "unreaditem".chars() {
+            handle_picker_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+            );
+        }
+        assert_eq!(app.picker.as_ref().unwrap().mode, PickerMode::Manage);
+        let data = picker_render_data(&app, 10, 80).unwrap();
+        assert_eq!(data.labels, vec!["unreadItem".to_string()]);
+        handle_picker_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.highlight_groups.groups.len(), 1);
+        assert_eq!(app.active_highlight, Some(0));
+        assert!(app.picker.is_none());
+    }
+
+    #[test]
+    fn highlight_manage_create_row_absent_when_query_empty() {
+        use crate::highlight_model::HighlightGroup;
+
+        let mut app = App::new(100);
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("unreadItem").unwrap());
+        app.open_highlight_finder();
+        let data = picker_render_data(&app, 10, 80).unwrap();
+        assert_eq!(data.labels, vec!["unreadItem".to_string()]);
+        assert!(!data
+            .labels
+            .iter()
+            .any(|l| l.contains(theme::GLYPH_MODE_NEW)));
+    }
+
+    #[test]
+    fn highlight_manage_enter_on_prefix_hit_still_activates() {
+        use crate::highlight_model::HighlightGroup;
+        use crate::picker::PickerMode;
+
+        let mut app = App::new(100);
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("unreadItem").unwrap());
+        app.open_highlight_finder();
+        for c in "unread".chars() {
+            handle_picker_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+            );
+        }
+        assert_eq!(app.picker.as_ref().unwrap().mode, PickerMode::Manage);
+        handle_picker_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.highlight_groups.groups.len(), 1);
+        assert_eq!(app.active_highlight, Some(0));
+        assert!(app.picker.is_none());
+    }
+
+    #[test]
     fn highlight_new_reuses_disabled_and_jumps() {
         use crate::highlight_model::HighlightGroup;
         use crate::picker::PickerKind;
@@ -4796,6 +4977,120 @@ mod dispatch_tests {
         assert!(!app.highlight_groups.groups[0].enabled);
         assert_eq!(app.groups.groups.len(), 1);
         assert_eq!(app.highlight_groups.groups.len(), 1);
+    }
+
+    #[test]
+    fn unified_ctrl_t_disables_all_then_enables_all() {
+        use crate::filter_model::{ExcludeEntry, Group};
+        use crate::highlight_model::HighlightGroup;
+        use crate::input::{Chip, ChipField};
+
+        let mut app = App::new(100);
+        app.groups.groups.push(Group {
+            label: "f1".into(),
+            chips: Vec::new(),
+            enabled: true,
+            same_field_op: crate::fuzzy::SameFieldOp::And,
+        });
+        app.groups.groups.push(Group {
+            label: "f2".into(),
+            chips: Vec::new(),
+            enabled: false,
+            same_field_op: crate::fuzzy::SameFieldOp::And,
+        });
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("h1").unwrap());
+        app.groups.excludes.push(ExcludeEntry {
+            chip: Chip {
+                field: ChipField::Tag,
+                value: "noise".into(),
+            },
+            enabled: true,
+        });
+        app.open_unified_picker();
+
+        // Mixed state → disable everything.
+        handle_picker_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL),
+        );
+        assert!(app.picker.is_some(), "panel stays open");
+        assert!(app.groups.groups.iter().all(|g| !g.enabled));
+        assert!(app.highlight_groups.groups.iter().all(|g| !g.enabled));
+        assert!(app.groups.excludes.iter().all(|e| !e.enabled));
+
+        // All disabled → enable everything.
+        handle_picker_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL),
+        );
+        assert!(app.groups.groups.iter().all(|g| g.enabled));
+        assert!(app.highlight_groups.groups.iter().all(|g| g.enabled));
+        assert!(app.groups.excludes.iter().all(|e| e.enabled));
+    }
+
+    #[test]
+    fn unified_ctrl_t_scopes_to_checked_when_present() {
+        use crate::filter_model::Group;
+        use crate::highlight_model::HighlightGroup;
+
+        let mut app = App::new(100);
+        app.groups.groups.push(Group {
+            label: "f1".into(),
+            chips: Vec::new(),
+            enabled: true,
+            same_field_op: crate::fuzzy::SameFieldOp::And,
+        });
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("h1").unwrap());
+        app.open_unified_picker();
+
+        // Check only the first row (Tab also advances the cursor).
+        handle_picker_key(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.picker.as_ref().unwrap().checked.len(), 1);
+
+        handle_picker_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL),
+        );
+        assert!(!app.groups.groups[0].enabled);
+        assert!(
+            app.highlight_groups.groups[0].enabled,
+            "unchecked rows stay untouched"
+        );
+        assert_eq!(
+            app.picker.as_ref().unwrap().checked.len(),
+            1,
+            "check set survives"
+        );
+    }
+
+    #[test]
+    fn unified_ctrl_t_scopes_to_query_visible_rows() {
+        use crate::filter_model::Group;
+        use crate::highlight_model::HighlightGroup;
+
+        let mut app = App::new(100);
+        app.groups.groups.push(Group {
+            label: "f1".into(),
+            chips: Vec::new(),
+            enabled: true,
+            same_field_op: crate::fuzzy::SameFieldOp::And,
+        });
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("h1").unwrap());
+        app.open_unified_picker();
+
+        // Query keeps only the Highlight row visible.
+        for c in "Highlight".chars() {
+            handle_picker_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+            );
+        }
+        handle_picker_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL),
+        );
+        assert!(!app.highlight_groups.groups[0].enabled);
+        assert!(app.groups.groups[0].enabled, "filtered-out rows untouched");
     }
 
     #[test]
