@@ -3101,7 +3101,7 @@ pub fn render_picker_detail(row: Option<&crate::model::EntryRow>, frame: &mut Fr
     frame.render_widget(Paragraph::new(shown), inner);
 }
 
-/// Destructive picker action confirmation, overlaid at the picker center.
+/// Destructive confirm, overlaid at the frame center.
 fn confirm_dialog_question(confirm: &crate::picker::ConfirmKind) -> String {
     match confirm {
         crate::picker::ConfirmKind::DeleteMany { items } => {
@@ -3112,18 +3112,19 @@ fn confirm_dialog_question(confirm: &crate::picker::ConfirmKind) -> String {
             }
         }
         crate::picker::ConfirmKind::DeletePreset { name } => format!("Delete preset '{name}'?"),
+        crate::picker::ConfirmKind::ClearAll => "Clear all rules?".to_string(),
     }
 }
 
 pub fn render_confirm_dialog(
     confirm: &crate::picker::ConfirmKind,
     frame: &mut Frame,
-    picker_area: Rect,
+    frame_area: Rect,
 ) {
     let question = confirm_dialog_question(confirm);
-    let width = 34.min(picker_area.width).max(1);
-    let height = 5.min(picker_area.height).max(1);
-    let area = centered_modal_rect(picker_area, width, height);
+    let width = 34.min(frame_area.width).max(1);
+    let height = 5.min(frame_area.height).max(1);
+    let area = centered_modal_rect(frame_area, width, height);
     let inner = render_modal_shell("Confirm", frame, area);
     let text = vec![
         Line::from(Span::styled(
@@ -6301,8 +6302,7 @@ mod tests {
                     frame,
                     frame.area(),
                 );
-                let picker_area = picker_frame_rect(frame.area(), true);
-                render_confirm_dialog(&confirm, frame, picker_area);
+                render_confirm_dialog(&confirm, frame, frame.area());
             })
             .unwrap();
 
@@ -6419,8 +6419,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|frame| {
-                let picker_area = picker_frame_rect(frame.area(), true);
-                render_confirm_dialog(&confirm, frame, picker_area);
+                render_confirm_dialog(&confirm, frame, frame.area());
             })
             .unwrap();
 
@@ -6559,7 +6558,7 @@ mod tests {
     }
 
     #[test]
-    fn confirm_dialog_centers_on_compact_picker() {
+    fn confirm_dialog_centers_on_frame() {
         use crate::picker::{ConfirmKind, UnifiedId, UnifiedKind};
 
         let confirm = ConfirmKind::DeleteMany {
@@ -6569,33 +6568,37 @@ mod tests {
             }],
         };
         let frame = Rect::new(0, 0, 100, 40);
-        let compact = picker_frame_rect(frame, false);
-        let full = picker_frame_rect(frame, true);
-        let width = 34.min(compact.width).max(1);
-        let height = 5.min(compact.height).max(1);
-        let area = centered_modal_rect(compact, width, height);
-        assert!(
-            area.x >= compact.x
-                && area.x + area.width <= compact.x + compact.width
-                && area.y >= compact.y
-                && area.y + area.height <= compact.y + compact.height,
-            "confirm area {area:?} must lie inside compact picker {compact:?}"
-        );
-        assert!(
-            compact.width * 2 <= full.width + 1,
-            "compact width should be ~half of full ({compact:?} vs {full:?})"
-        );
+        let width = 34.min(frame.width).max(1);
+        let height = 5.min(frame.height).max(1);
+        let area = centered_modal_rect(frame, width, height);
+        assert_eq!(area.x, frame.x + (frame.width.saturating_sub(width)) / 2);
+        assert_eq!(area.y, frame.y + (frame.height.saturating_sub(height)) / 2);
 
         let backend = TestBackend::new(100, 40);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|f| {
-                render_confirm_dialog(&confirm, f, compact);
+                render_confirm_dialog(&confirm, f, f.area());
             })
             .unwrap();
         let content = cell_text(terminal.backend().buffer());
         assert!(content.contains("y/Enter"));
         assert!(content.contains("n/Esc"));
+    }
+
+    #[test]
+    fn confirm_dialog_clear_all_copy() {
+        let confirm = crate::picker::ConfirmKind::ClearAll;
+        assert_eq!(confirm_dialog_question(&confirm), "Clear all rules?");
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                render_confirm_dialog(&confirm, f, f.area());
+            })
+            .unwrap();
+        let content = cell_text(terminal.backend().buffer());
+        assert!(content.contains("Clear all rules?"), "{content:?}");
     }
 
     #[test]

@@ -118,8 +118,9 @@ Adjacent popups leave `POPUP_GAP` (1 cell): vertical via
 `stack_below_rect_gapped`, Picker L/R via `split_picker_lr_gapped`.
 
 `picker_frame_rect(frame, show_preview)`: full width when preview is on;
-≈ half width (centered) when off. `render_confirm_dialog` MUST receive
-that same `picker_area` — never recompute a full-width frame on its own.
+≈ half width (centered) when off. `render_confirm_dialog` centers on the
+full frame (`frame_area`), not the picker rect. Confirm state lives on
+`App.confirm`, not `PickerSession`.
 
 Do NOT reintroduce divider-only shells for popups, or nest a bordered
 candidate list inside an already-bordered Picker pane.
@@ -156,6 +157,6 @@ candidate list inside an already-bordered Picker pane.
 - [ ] New `BookmarkList`/`HashSet` mutation sites sync the cache.
 - [ ] Picker changes branch on `session.kind` in render AND key dispatch.
 - [ ] Popup surfaces use rounded `render_modal_shell`; strips stay `divider_block`.
-- [ ] Confirm dialog anchors to the actual `picker_frame_rect(..., show_preview)`.
+- [ ] Confirm dialog centers on the full frame; state is `App.confirm`.
 - [ ] Deleted fields have no surviving references (grep).
 - [ ] `cargo test --workspace` green; `cargo fmt -p alnav --check` clean.

@@ -291,11 +291,7 @@ fn push_literal(out: &mut Vec<HintEntry>, key: &str, label: &'static str, detail
 
 /// Resolve the active hint context (modal > pending > focus).
 pub fn context_kind(app: &App) -> ContextKind {
-    if app
-        .picker
-        .as_ref()
-        .is_some_and(|session| session.confirm.is_some())
-    {
+    if app.confirm.is_some() {
         return ContextKind::Confirm;
     }
     if app.picker.is_some() {
@@ -583,6 +579,13 @@ pub fn context_entries(app: &App) -> Vec<HintEntry> {
                 &[ActionId::PickerDelete, ActionId::PickerDeleteAlt],
                 "delete",
                 "delete with confirm",
+            );
+            push_single(
+                &mut out,
+                app,
+                ActionId::ClearAllRules,
+                "clear",
+                "clear all rules",
             );
             push_short(&mut out, app, ActionId::PickerClose, "close");
             out
@@ -1567,7 +1570,8 @@ pub enum HomeHitKind {
 
 /// Whether Help may open for the current app state.
 pub fn help_available(app: &App) -> bool {
-    if app.picker.is_some()
+    if app.confirm.is_some()
+        || app.picker.is_some()
         || app.time_panel.is_some()
         || app.hist_open()
         || app.detail_open()
@@ -1749,7 +1753,7 @@ mod tests {
 
         let mut app = app_with_focus(Focus::LogList);
         app.open_unified_picker();
-        app.picker.as_mut().unwrap().request_delete_many(vec![
+        app.request_delete_many(vec![
             UnifiedId {
                 kind: UnifiedKind::Highlight,
                 source_index: 0,

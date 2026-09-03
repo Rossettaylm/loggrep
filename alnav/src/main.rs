@@ -875,7 +875,6 @@ fn run<B: ratatui::backend::Backend>(
                     } else if let Some(data) =
                         picker_render_data(app, preview_limit, preview_inner_w)
                     {
-                        let picker_area = ui::picker_frame_rect(frame_area, data.show_preview);
                         let right_pane = match &data.preset_preview {
                             Some(lines) => ui::PickerRightPane::ChipRules(lines),
                             None => ui::PickerRightPane::Hits(&data.preview),
@@ -902,15 +901,6 @@ fn run<B: ratatui::backend::Backend>(
                             frame,
                             frame_area,
                         );
-                        if let Some(confirm) = app
-                            .picker
-                            .as_ref()
-                            .and_then(|session| session.confirm.as_ref())
-                        {
-                            ui::render_confirm_dialog(confirm, frame, picker_area);
-                            // Don't let the search caret poke through the dialog.
-                            hw_cursor = None;
-                        }
                     // Search / Input use top stack: modal → candidates → Preview (H1).
                     } else if app.highlight_box.editing {
                         let area =
@@ -1001,6 +991,10 @@ fn run<B: ratatui::backend::Backend>(
                     if let Some(dialog) = app.preset_name.as_ref() {
                         hw_cursor = ui::render_preset_name_dialog(dialog, frame, frame_area);
                     }
+                    if let Some(confirm) = app.confirm.as_ref() {
+                        ui::render_confirm_dialog(confirm, frame, frame_area);
+                        hw_cursor = None;
+                    }
                     if let Some(pos) = hw_cursor {
                         frame.set_cursor_position(pos);
                     }
@@ -1039,6 +1033,9 @@ fn run<B: ratatui::backend::Backend>(
 
         // Name dialog / Picker / Search-box / time panel before Ctrl+C / Normal/Insert
         // so Ctrl+C cancels the draft like Esc, instead of quitting in Normal.
+        if handle_confirm_key(app, key) {
+            continue;
+        }
         if app.preset_name.is_some() {
             handle_preset_name_key(app, key);
             continue;
@@ -1631,14 +1628,10 @@ fn maybe_return_highlight_auto_new(app: &mut App) {
     app.picker.as_mut().unwrap().return_to_manage();
 }
 
-fn confirm_picker_delete(app: &mut App) {
+fn confirm_pending(app: &mut App) {
     use crate::picker::ConfirmKind;
 
-    let Some(confirm) = app
-        .picker
-        .as_ref()
-        .and_then(|session| session.confirm.clone())
-    else {
+    let Some(confirm) = app.confirm.clone() else {
         return;
     };
     match confirm {
@@ -1660,15 +1653,15 @@ fn confirm_picker_delete(app: &mut App) {
             if highlight_manage {
                 // Empty groups must not stay in Manage (`/` with none → New).
                 if app.highlight_groups.groups.is_empty() {
+                    app.cancel_confirm();
                     if let Some(session) = app.picker.as_mut() {
-                        session.cancel_confirm();
                         session.enter_new();
                     }
                     return;
                 }
                 let count = highlight_visible_indices(app).len();
+                app.cancel_confirm();
                 if let Some(session) = app.picker.as_mut() {
-                    session.cancel_confirm();
                     session.checked.clear();
                     session.selected = session.selected.min(count.saturating_sub(1));
                 }
@@ -1676,8 +1669,8 @@ fn confirm_picker_delete(app: &mut App) {
                 return;
             }
             let count = unified_picker_items(app).len();
+            app.cancel_confirm();
             if let Some(session) = app.picker.as_mut() {
-                session.cancel_confirm();
                 session.checked.clear();
                 session.selected = session.selected.min(count.saturating_sub(1));
             }
@@ -1687,12 +1680,28 @@ fn confirm_picker_delete(app: &mut App) {
             let count = preset_visible_indices(app).len();
             if count == 0 {
                 app.close_picker();
-            } else if let Some(session) = app.picker.as_mut() {
-                session.cancel_confirm();
-                session.selected = session.selected.min(count.saturating_sub(1));
+            } else {
+                app.cancel_confirm();
+                if let Some(session) = app.picker.as_mut() {
+                    session.selected = session.selected.min(count.saturating_sub(1));
+                }
             }
         }
+        ConfirmKind::ClearAll => app.clear_all_rules(),
     }
+}
+
+/// Swallow keys while a screen-centered confirm is open. Returns true when handled.
+fn handle_confirm_key(app: &mut App, key: event::KeyEvent) -> bool {
+    if app.confirm.is_none() {
+        return false;
+    }
+    match key.code {
+        KeyCode::Enter | KeyCode::Char('y') => confirm_pending(app),
+        KeyCode::Esc | KeyCode::Char('n') => app.cancel_confirm(),
+        _ => {}
+    }
+    true
 }
 
 fn replace_last_token(draft: &str, replacement: &str) -> String {
@@ -1880,7 +1889,7 @@ fn manage_request_delete_selected(app: &mut App) {
         session.checked.iter().copied().collect()
     };
     if !items.is_empty() {
-        app.picker.as_mut().unwrap().request_delete_many(items);
+        app.request_delete_many(items);
     }
 }
 
@@ -1962,20 +1971,7 @@ fn handle_picker_key(app: &mut App, key: event::KeyEvent) {
     use crate::picker::{PickerKind, PickerMode, PickerSession};
 
     let ctrl = key.modifiers.contains(event::KeyModifiers::CONTROL);
-    if app
-        .picker
-        .as_ref()
-        .is_some_and(|session| session.confirm.is_some())
-    {
-        match key.code {
-            KeyCode::Enter | KeyCode::Char('y') => confirm_picker_delete(app),
-            KeyCode::Esc | KeyCode::Char('n') => {
-                if let Some(session) = app.picker.as_mut() {
-                    session.cancel_confirm();
-                }
-            }
-            _ => {}
-        }
+    if handle_confirm_key(app, key) {
         return;
     }
 
@@ -2043,8 +2039,7 @@ fn handle_picker_key(app: &mut App, key: event::KeyEvent) {
                     _ if is_delete => {
                         if let Some(&idx) = vis.get(app.picker.as_ref().unwrap().selected) {
                             let name = app.preset_catalog[idx].name.clone();
-                            app.picker.as_mut().unwrap().confirm =
-                                Some(crate::picker::ConfirmKind::DeletePreset { name });
+                            app.request_confirm(crate::picker::ConfirmKind::DeletePreset { name });
                         }
                     }
                     KeyCode::Enter => {
@@ -2090,12 +2085,10 @@ fn handle_picker_key(app: &mut App, key: event::KeyEvent) {
                     }
                     _ if is_delete => {
                         if let Some(idx) = highlight_selected_index(app) {
-                            app.picker.as_mut().unwrap().request_delete_many(vec![
-                                crate::picker::UnifiedId {
-                                    kind: crate::picker::UnifiedKind::Highlight,
-                                    source_index: idx,
-                                },
-                            ]);
+                            app.request_delete_many(vec![crate::picker::UnifiedId {
+                                kind: crate::picker::UnifiedKind::Highlight,
+                                source_index: idx,
+                            }]);
                         }
                     }
                     KeyCode::Enter => {
@@ -2144,6 +2137,7 @@ fn handle_picker_key(app: &mut App, key: event::KeyEvent) {
                         session.selected = (session.selected + 1).min(count.saturating_sub(1));
                     }
                     KeyCode::Char('t') if ctrl => manage_toggle_all(app),
+                    KeyCode::Char('k') if ctrl => app.request_clear_all_rules(),
                     KeyCode::Char('x') if ctrl => manage_enter_edit_selected(app),
                     _ if is_delete => manage_request_delete_selected(app),
                     KeyCode::Enter => {
@@ -4890,7 +4884,7 @@ mod dispatch_tests {
         app.open_unified_picker();
 
         handle_picker_key(&mut app, KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
-        assert!(app.picker.as_ref().unwrap().confirm.is_some());
+        assert!(app.confirm.is_some());
         handle_picker_key(
             &mut app,
             KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
@@ -4899,17 +4893,17 @@ mod dispatch_tests {
             app.picker.as_ref().unwrap().query.is_empty(),
             "confirm state must swallow keys instead of editing the picker"
         );
-        assert!(app.picker.as_ref().unwrap().confirm.is_some());
+        assert!(app.confirm.is_some());
         handle_picker_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(app.highlight_groups.groups.len(), 1);
-        assert!(app.picker.as_ref().unwrap().confirm.is_none());
+        assert!(app.confirm.is_none());
 
         handle_picker_key(
             &mut app,
             KeyEvent::new(KeyCode::Backspace, KeyModifiers::CONTROL),
         );
         assert!(
-            app.picker.as_ref().unwrap().confirm.is_none(),
+            app.confirm.is_none(),
             "Ctrl-Backspace must not delete in Manage"
         );
 
@@ -4972,7 +4966,7 @@ mod dispatch_tests {
         assert_eq!(app.picker.as_ref().unwrap().checked.len(), 2);
 
         handle_picker_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(app.picker.as_ref().unwrap().confirm.is_none());
+        assert!(app.confirm.is_none());
         assert!(!app.groups.groups[0].enabled);
         assert!(!app.highlight_groups.groups[0].enabled);
         assert_eq!(app.groups.groups.len(), 1);
@@ -5091,6 +5085,100 @@ mod dispatch_tests {
         );
         assert!(!app.highlight_groups.groups[0].enabled);
         assert!(app.groups.groups[0].enabled, "filtered-out rows untouched");
+    }
+
+    #[test]
+    fn unified_ctrl_k_clears_all_rules_after_confirm() {
+        use crate::filter_model::{ExcludeEntry, Group};
+        use crate::highlight_model::HighlightGroup;
+        use crate::input::{Chip, ChipField};
+
+        let mut app = App::new(100);
+        app.groups.groups.push(Group {
+            label: "f1".into(),
+            chips: Vec::new(),
+            enabled: true,
+            same_field_op: crate::fuzzy::SameFieldOp::And,
+        });
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("h1").unwrap());
+        app.groups.excludes.push(ExcludeEntry {
+            chip: Chip {
+                field: ChipField::Tag,
+                value: "noise".into(),
+            },
+            enabled: true,
+        });
+        app.lock_pid = Some("9".into());
+        app.time_bound = Some(crate::filter_model::TimeBound {
+            since: Some("12:00:00".into()),
+            until: None,
+        });
+        app.following = true;
+        app.open_unified_picker();
+
+        handle_picker_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL),
+        );
+        assert!(matches!(
+            app.confirm,
+            Some(crate::picker::ConfirmKind::ClearAll)
+        ));
+        assert_eq!(app.groups.groups.len(), 1);
+
+        handle_picker_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.confirm.is_none());
+        assert_eq!(app.groups.groups.len(), 1);
+        assert!(app.picker.is_some());
+
+        handle_picker_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL),
+        );
+        handle_picker_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.groups.groups.is_empty());
+        assert!(app.groups.excludes.is_empty());
+        assert!(app.highlight_groups.groups.is_empty());
+        assert!(app.picker.is_none());
+        assert_eq!(app.focus, app::Focus::LogList);
+        assert!(!app.following);
+        assert_eq!(app.lock_pid.as_deref(), Some("9"));
+        assert!(app.time_bound.is_some());
+        assert_eq!(app.status_msg.as_deref(), Some("ALL CLEARED"));
+    }
+
+    #[test]
+    fn unified_ctrl_k_empty_flashes_no_rules() {
+        let mut app = App::new(100);
+        app.open_unified_picker();
+        handle_picker_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL),
+        );
+        assert!(app.confirm.is_none());
+        assert!(app.picker.is_some());
+        assert_eq!(app.status_msg.as_deref(), Some("NO RULES"));
+    }
+
+    #[test]
+    fn dispatch_clear_all_rules_confirms_without_opening_picker() {
+        use crate::highlight_model::HighlightGroup;
+
+        let mut app = App::new(100);
+        app.push_or_find_highlight_group(HighlightGroup::from_pattern("h1").unwrap());
+        crate::action::dispatch(&mut app, keymap::ActionId::ClearAllRules);
+        assert!(app.picker.is_none());
+        assert!(matches!(
+            app.confirm,
+            Some(crate::picker::ConfirmKind::ClearAll)
+        ));
+        handle_confirm_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+        );
+        assert!(app.highlight_groups.groups.is_empty());
+        assert!(app.confirm.is_none());
+        assert_eq!(app.focus, app::Focus::LogList);
     }
 
     #[test]

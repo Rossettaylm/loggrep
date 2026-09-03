@@ -473,6 +473,7 @@ pub enum ActionId {
     LogListTime,
     LogListWrapToggle,
     LeaderManage,
+    ClearAllRules,
     LeaderPresetSave,
     LeaderPresetOpen,
     LeaderSummary,
@@ -670,6 +671,7 @@ impl ActionId {
         Self::LogListTime,
         Self::LogListWrapToggle,
         Self::LeaderManage,
+        Self::ClearAllRules,
         Self::LeaderPresetSave,
         Self::LeaderPresetOpen,
         Self::LeaderSummary,
@@ -1321,7 +1323,21 @@ impl ActionId {
                 palette_title: "",
                 palette_icon: "",
             }
-            .with_palette("Manage Filters", theme::GLYPH_MODE_MANAGE),
+            .with_palette("Manage Rules", theme::GLYPH_MODE_MANAGE),
+            Self::ClearAllRules => ActionMeta {
+                id: Self::ClearAllRules,
+                context: KeyContext::Picker,
+                toml_key: "clear_all_rules",
+                default: Binding::parse_str("C-k").expect("default binding"),
+                kind: ActionKind::Leaf,
+                capabilities: &[],
+                label: "clear",
+                detail: "clear all filter / highlight / exclude rules",
+                in_palette: false,
+                palette_title: "",
+                palette_icon: "",
+            }
+            .with_palette("Clear All Rules", theme::GLYPH_TITLE_EXCLUDE),
             Self::LeaderPresetSave => ActionMeta {
                 id: Self::LeaderPresetSave,
                 context: KeyContext::Global,
@@ -2990,6 +3006,7 @@ fn action_by_toml(ctx: KeyContext, key: &str) -> Option<ActionId> {
         (KeyContext::Picker, "delete") => Some(ActionId::PickerDelete),
         (KeyContext::Picker, "delete_alt") => Some(ActionId::PickerDeleteAlt),
         (KeyContext::Picker, "close") => Some(ActionId::PickerClose),
+        (KeyContext::Picker, "clear_all_rules") => Some(ActionId::ClearAllRules),
         (KeyContext::Confirm, "yes") => Some(ActionId::ConfirmYes),
         (KeyContext::Confirm, "yes_enter") => Some(ActionId::ConfirmYesEnter),
         (KeyContext::Confirm, "no") => Some(ActionId::ConfirmNo),
@@ -3515,6 +3532,7 @@ move_down = "k"
         assert!(text.contains("command_palette = \"C-p\""));
         assert!(text.contains("highlight_new = \"/\""));
         assert!(text.contains("highlight_add = \"\""));
+        assert!(text.contains("clear_all_rules = \"C-k\""));
         assert!(text.contains("submit = \"Enter\""));
         assert!(text.contains("[help]"));
         assert!(text.contains("back = \"h\""));

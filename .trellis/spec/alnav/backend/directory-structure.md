@@ -99,8 +99,14 @@ Manage mode is dispatched **by `session.kind`** in two places:
   `ActionKind::Jump`, never `unified_picker_items`. Future per-kind
   Manage panels branch here.
 - `handle_picker_key` Manage branch (`main.rs`): routes keys per kind.
-  `Unified` supports Tab multi-select + Ctrl-X edit; Enter = toggle
-  (Highlight rows included — no jump, picker stays open).
+  `Unified` supports Tab multi-select + Ctrl-X edit + Ctrl-K clear-all
+  rules; Enter = toggle (Highlight rows included — no jump, picker
+  stays open). Destructive confirm lives on `App.confirm`
+  (`DeleteMany` / `DeletePreset` / `ClearAll`), is drawn screen-centered,
+  and is handled before picker keys. `ClearAll` wipes Filter + Highlight
+  + Exclude only (not lock / time / bookmarks), then closes to LogList
+  with `following=false`. The same confirm is also opened by `C-p`
+  `ClearAllRules` without opening Manage.
   `Highlight` (finder): no Tab multi-select; Enter =
   `activate_highlight_group` + close; Ctrl-X = edit; Delete /
   Ctrl-Backspace = delete confirm; nonempty query + zero hits →

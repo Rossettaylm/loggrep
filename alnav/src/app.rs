@@ -380,6 +380,8 @@ pub struct App {
     pub stream_source_panel: Option<crate::source_panel::StreamSourcePanel>,
     /// Open fzf-style picker session (Unified Manage / Filter / Highlight / Exclude).
     pub picker: Option<crate::picker::PickerSession>,
+    /// Screen-centered destructive confirm (`DeleteMany` / `DeletePreset` / `ClearAll`).
+    pub confirm: Option<crate::picker::ConfirmKind>,
     /// VS Code-style command palette (`C-p`). Independent of [`Self::picker`].
     pub command_palette: Option<crate::command_palette::CommandPalette>,
     /// Bookmark compare tray modal (`mm`). Not a [`crate::picker::PickerSession`].
@@ -520,6 +522,7 @@ impl App {
             open_file_panel: None,
             stream_source_panel: None,
             picker: None,
+            confirm: None,
             command_palette: None,
             compare: None,
             bookmarks: BookmarkList::default(),
@@ -694,6 +697,7 @@ impl App {
     /// no other modal). Pending chords are allowed — opening clears them.
     pub fn command_palette_available(&self) -> bool {
         if self.command_palette.is_some()
+            || self.confirm.is_some()
             || self.picker.is_some()
             || self.time_panel.is_some()
             || self.detail_open()
@@ -913,6 +917,7 @@ impl App {
         self.view_focus = ViewFocus::default();
         self.time_panel = None;
         self.command_palette = None;
+        self.confirm = None;
         self.compare = None;
         self.detail = DetailView::Closed;
         self.help_open = false;
@@ -966,9 +971,68 @@ impl App {
     /// Does not change live-follow state.
     pub fn close_picker(&mut self) {
         self.picker = None;
+        self.confirm = None;
         self.pending_leader = false;
         self.focus = Focus::LogList;
         self.vocab_match.clear();
+    }
+
+    /// Whether any Filter / Highlight / Exclude group exists (enabled or not).
+    pub fn has_rules(&self) -> bool {
+        !self.groups.groups.is_empty()
+            || !self.groups.excludes.is_empty()
+            || !self.highlight_groups.groups.is_empty()
+    }
+
+    pub fn request_confirm(&mut self, kind: crate::picker::ConfirmKind) {
+        self.confirm = Some(kind);
+    }
+
+    pub fn cancel_confirm(&mut self) {
+        self.confirm = None;
+    }
+
+    pub fn request_delete_many(&mut self, items: Vec<crate::picker::UnifiedId>) {
+        if items.is_empty() {
+            return;
+        }
+        self.confirm = Some(crate::picker::ConfirmKind::DeleteMany { items });
+    }
+
+    /// Ask to wipe every rule, or flash `NO RULES` when the lists are empty.
+    pub fn request_clear_all_rules(&mut self) {
+        if !self.has_rules() {
+            self.set_flash("NO RULES");
+            return;
+        }
+        self.confirm = Some(crate::picker::ConfirmKind::ClearAll);
+    }
+
+    /// Delete every Filter / Highlight / Exclude group. Does not touch lock,
+    /// time, search, or bookmarks. Closes the picker and returns to LogList.
+    pub fn clear_all_rules(&mut self) {
+        let keep_id = self.current_row().map(|r| r.row_id);
+        self.following = false;
+        self.groups.groups.clear();
+        self.groups.excludes.clear();
+        self.highlight_groups.groups.clear();
+        self.group_cursor = 0;
+        self.exclude_cursor = 0;
+        self.highlight_cursor = 0;
+        self.active_highlight = None;
+        self.rebuild_visible();
+        if let Some(id) = keep_id {
+            if let Some(vis) = self.visible_idx_for_row_id(id) {
+                self.cursor = vis;
+            }
+        }
+        self.match_stats_stale = true;
+        if self.store.is_file() {
+            self.restart_highlight_scan();
+        }
+        self.confirm = None;
+        self.close_picker();
+        self.set_flash("ALL CLEARED");
     }
 
     /// Kick / refresh async vocab candidate matching from current picker draft.

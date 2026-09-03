@@ -60,7 +60,7 @@ behavior from CLAUDE.md when implementing filters, pickers, or modals.
 - [ ] New modal key paths handle Ctrl+C as cancel when appropriate.
 - [ ] Command palette is not a `PickerSession`; empty query lists nothing; idle status has no third `C-p` hint.
 - [ ] Bookmark `mm` is `App.compare`, not a picker; `help_available` is false while compare is open; Esc/Ctrl+C close without `resume_following`; `bookmark_row_ids` stays synced on `ma` toggle and panel `dd`.
-- [ ] Popup shells stay rounded; strips stay divider; confirm uses the same `picker_area` as the picker.
+- [ ] Popup shells stay rounded; strips stay divider; confirm centers on the full frame (`App.confirm`).
 - [ ] TUI paint goes through `theme::*` tokens (palette-mapped). CLI colored output stays on `alnav::logcolor`.
 - [ ] Status hints / Help copy stay in `help.rs` (`HintEntry`); two-level Help (Home + 7 pages); Esc/`?`/Ctrl+C close without `resume_following`; `h`/Backspace back; LogList/Help `J`/`K` share `FAST_SCROLL_STEP`.
 - [ ] `cargo test -p alnav` green; `cargo fmt -p alnav --check` clean.

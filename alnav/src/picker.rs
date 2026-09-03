@@ -83,6 +83,8 @@ pub enum ConfirmKind {
     DeleteMany { items: Vec<UnifiedId> },
     /// Delete a named preset file (`presets/<name>.toml`).
     DeletePreset { name: String },
+    /// Wipe every Filter / Highlight / Exclude group (rules).
+    ClearAll,
 }
 
 pub struct PickerSession {
@@ -93,7 +95,6 @@ pub struct PickerSession {
     /// New/Edit draft（不含前缀 `:`）
     pub draft: TextField,
     pub selected: usize,
-    pub confirm: Option<ConfirmKind>,
     /// Filter/Exclude New|Edit 时复用
     pub input: Option<InputBox>,
     /// Picker-local candidates (currently msg-chip tokens).
@@ -113,7 +114,6 @@ impl PickerSession {
             query: TextField::new(),
             draft: TextField::new(),
             selected: 0,
-            confirm: None,
             input: None,
             choices: Vec::new(),
             checked: HashSet::new(),
@@ -133,7 +133,6 @@ impl PickerSession {
         self.query.clear();
         self.draft.clear();
         self.selected = 0;
-        self.confirm = None;
         self.checked.clear();
         self.input = Self::fresh_input_for_kind(self.kind.clone());
         self.auto_from_manage = false;
@@ -145,7 +144,6 @@ impl PickerSession {
         self.query.clear();
         self.draft = TextField::from_text(draft.into());
         self.selected = 0;
-        self.confirm = None;
         self.checked.clear();
         self.input = Self::fresh_input_for_kind(self.kind.clone());
         self.auto_from_manage = true;
@@ -157,7 +155,6 @@ impl PickerSession {
         self.query.clear();
         self.draft.clear();
         self.selected = 0;
-        self.confirm = None;
         self.checked.clear();
         self.input = None;
         self.auto_from_manage = false;
@@ -167,7 +164,6 @@ impl PickerSession {
         self.mode = PickerMode::Edit { index };
         self.draft = TextField::from_text(prefill);
         self.selected = 0;
-        self.confirm = None;
         self.checked.clear();
         self.input = None;
         self.auto_from_manage = false;
@@ -177,20 +173,8 @@ impl PickerSession {
         self.mode = PickerMode::Edit { index };
         self.draft.clear();
         self.selected = 0;
-        self.confirm = None;
         self.checked.clear();
         self.input = Some(input);
-    }
-
-    pub fn request_delete_many(&mut self, items: Vec<UnifiedId>) {
-        if items.is_empty() {
-            return;
-        }
-        self.confirm = Some(ConfirmKind::DeleteMany { items });
-    }
-
-    pub fn cancel_confirm(&mut self) {
-        self.confirm = None;
     }
 
     /// ignore-case nucleo fuzzy 过滤；返回源列表下标（按 score 排序）
@@ -273,18 +257,6 @@ mod tests {
         p.enter_edit(1, "foo".into());
         assert_eq!(p.mode, PickerMode::Edit { index: 1 });
         assert_eq!(p.draft, "foo");
-    }
-
-    #[test]
-    fn confirm_delete_many_flow() {
-        let mut p = PickerSession::open(PickerKind::Unified);
-        p.request_delete_many(vec![UnifiedId {
-            kind: UnifiedKind::Filter,
-            source_index: 0,
-        }]);
-        assert!(p.confirm.is_some());
-        p.cancel_confirm();
-        assert!(p.confirm.is_none());
     }
 
     #[test]

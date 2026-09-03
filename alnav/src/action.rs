@@ -36,6 +36,7 @@ pub const PALETTE_IDS: &[ActionId] = &[
     ActionId::LogListClearLive,
     ActionId::LogListResumeFollow,
     ActionId::LeaderManage,
+    ActionId::ClearAllRules,
     ActionId::LeaderPresetSave,
     ActionId::LeaderPresetOpen,
     ActionId::LeaderSummary,
@@ -81,6 +82,7 @@ pub fn when(app: &App, id: ActionId) -> bool {
         ActionId::LogListResumeFollow => !app.following,
         ActionId::LockClear => app.lock_pid.is_some() || app.lock_tid.is_some(),
         ActionId::StripDDelete | ActionId::StripDDisable => app.focused_strip_has_selection(),
+        ActionId::ClearAllRules => app.has_rules(),
         _ => true,
     }
 }
@@ -133,6 +135,7 @@ pub fn dispatch(app: &mut App, id: ActionId) {
         GlobalFocusHighlight => app.focus = Focus::HighlightStrip,
         GlobalFocusLog => app.focus = Focus::LogList,
         GlobalFocusInput | LeaderManage => app.open_unified_picker(),
+        ClearAllRules => app.request_clear_all_rules(),
         GlobalFilterNew => app.open_picker_new(PickerKind::Filter),
         GlobalHighlightNew => app.open_highlight_finder(),
         GlobalHighlightAdd => app.open_picker_new(PickerKind::Highlight),
@@ -499,8 +502,13 @@ mod tests {
             ),
             (
                 ActionId::LeaderManage,
-                "Manage Filters",
+                "Manage Rules",
                 theme::GLYPH_MODE_MANAGE,
+            ),
+            (
+                ActionId::ClearAllRules,
+                "Clear All Rules",
+                theme::GLYPH_TITLE_EXCLUDE,
             ),
             (
                 ActionId::LeaderPresetSave,
@@ -706,6 +714,16 @@ mod tests {
         // empty visible: move is a no-op but must not panic
         dispatch(&mut app, ActionId::LogListMoveDown);
         dispatch(&mut app, ActionId::LogListMoveUp);
+    }
+
+    #[test]
+    fn clear_all_rules_hidden_when_empty() {
+        let mut app = idle_app();
+        assert!(!when(&app, ActionId::ClearAllRules));
+        app.push_or_find_highlight_group(
+            crate::highlight_model::HighlightGroup::from_pattern("h").unwrap(),
+        );
+        assert!(when(&app, ActionId::ClearAllRules));
     }
 
     #[test]
